@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -124,24 +125,22 @@ func (e *Exporter) report(ctx context.Context) error {
 	return nil
 }
 
-func (e *Exporter) Start(ctx context.Context) {
+func (e *Exporter) Start(ctx context.Context) error {
 	slog.Info("running arrow metrics exporter", "producers", len(e.producers))
 	if len(e.producers) == 0 {
-		return
+		return errors.New("No producers configured")
 	}
-	go func() {
-		tick := time.NewTicker(e.interval)
-		defer tick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-tick.C:
-				if err := e.report(ctx); err != nil {
-					fmt.Errorf("Failed to send arrow metrics: %v", err)
-				}
-				tick.Reset(libpf.AddJitter(e.interval, 0.2))
+	tick := time.NewTicker(e.interval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+			if err := e.report(ctx); err != nil {
+				fmt.Errorf("Failed to send arrow metrics: %v", err)
 			}
+			tick.Reset(libpf.AddJitter(e.interval, 0.2))
 		}
-	}()
+	}
 }

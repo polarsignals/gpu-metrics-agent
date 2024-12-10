@@ -11,6 +11,7 @@ import (
 
 	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	// parcaflags "github.com/parca-dev/parca-agent/flags"
+	"github.com/oklog/run"
 	"github.com/polarsignals/gpu-metrics-agent/flags"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -135,10 +136,19 @@ func mainWithExitCode() flags.ExitCode {
 		})
 
 	}
-	arrowMetricsExporter.Start(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	var g run.Group
+	g.Add(func() error {
+		return arrowMetricsExporter.Start(ctx)
+	}, func(error) {
+		cancel()
+	})
 
-	// Block forever
-	<-ctx.Done()
+	err = g.Run()
+	if err != nil {
+		slog.Error("metrics exporter exited with error", "error", err)
+		return flags.ExitFailure
+	}
 
 	return flags.ExitSuccess
 }
