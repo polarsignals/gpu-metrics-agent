@@ -111,6 +111,8 @@ github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjY
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 h1:C3w9PqII01/Oq1c1nUAm88MOHcQC9l5mIlSMApZMrHA=
 github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822/go.mod h1:+n7T8mK8HuQTcFwEeznm/DIxMOiR9yIdICNftLE1DvQ=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
+github.com/oklog/run v1.1.0 h1:GEenZ1cK0+q0+wsJew9qUg/DyD8k3JzYsZAi5gYi2mA=
+github.com/oklog/run v1.1.0/go.mod h1:sVPdnTZT1zYwAJeCMu2Th4T21pA3FPOQRfWjQlk7DVU=
 github.com/open-telemetry/otel-arrow v0.31.0 h1:KEWHM5XrUbuGktf17gp3Tgls0OHPyT0VtT5WEohiCC4=
 github.com/open-telemetry/otel-arrow v0.31.0/go.mod h1:rEiUiCmxRT3RrtB0ZsT5LeTWJBynPCs0iBkVlMGk+E8=
 github.com/parca-dev/parca-agent v0.35.0 h1:/ZgZH7tdT3ZPtgBc4XwpKRxm8PsxTNS+UPPhsy16Nx0=
