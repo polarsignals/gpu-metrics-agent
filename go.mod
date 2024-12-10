@@ -9,7 +9,6 @@ require (
 	github.com/open-telemetry/otel-arrow v0.31.0
 	github.com/parca-dev/parca-agent v0.35.0
 	github.com/prometheus/client_golang v1.20.5
-	github.com/sirupsen/logrus v1.9.3
 	go.opentelemetry.io/collector/pdata v1.21.0
 	go.opentelemetry.io/ebpf-profiler v0.0.0-20241206162831-84cce0a2aff6
 	go.opentelemetry.io/otel/trace v1.32.0
@@ -46,6 +45,7 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.55.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
+	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/collector/config/configtelemetry v0.114.0 // indirect

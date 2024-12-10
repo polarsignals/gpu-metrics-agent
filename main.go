@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime/debug"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/polarsignals/gpu-metrics-agent/flags"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
-	log "github.com/sirupsen/logrus"
+
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
@@ -83,7 +84,7 @@ func mainWithExitCode() flags.ExitCode {
 
 	f, err := flags.Parse()
 	if err != nil {
-		log.Errorf("Failed to parse flags: %v", err)
+		slog.Error("Failed to parse flags", "error", err)
 		return flags.ExitParseError
 	}
 
@@ -103,11 +104,10 @@ func mainWithExitCode() flags.ExitCode {
 
 	grpcConn, err := f.RemoteStore.WaitGrpcEndpoint(ctx, reg, noop.NewTracerProvider())
 	if err != nil {
-		log.Errorf("failed to connect to server: %v", err)
+		slog.Error("Failed to connect to server", "error", err)
 		return flags.ExitFailure
 	}
 	defer grpcConn.Close()
-
 
 	arrowClient := arrowpb.NewArrowMetricsServiceClient(grpcConn)
 	arrowMetricsExporter := NewExporter(arrowClient, time.Second*10, map[string]any{"foo": "bar"})
@@ -139,6 +139,6 @@ func mainWithExitCode() flags.ExitCode {
 
 	// Block forever
 	<-ctx.Done()
-	
+
 	return flags.ExitSuccess
 }

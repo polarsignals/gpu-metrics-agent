@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
-	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
@@ -56,17 +56,17 @@ func (p *producer) Produce(ms pmetric.MetricSlice) error {
 	for i, pds := range p.devices {
 		uuid, ret := pds.d.GetUUID()
 		if ret != nvml.SUCCESS {
-			log.Errorf("Failed to get device UUID at index %d: %v", i, nvml.ErrorString(ret))
+			slog.Error("Failed to get device UUID", "index", i, "error", nvml.ErrorString(ret))
 			continue
 		}
-		log.Debugf("Collecting metrics for device %s at index %d", uuid, i)
+		slog.Debug("Collecting metrics for device", "uuid", uuid, "index", i)
 
 		m := ms.AppendEmpty()
 		g := m.SetEmptyGauge()
 
 		valueType, utilSamps, ret := pds.d.GetSamples(nvml.GPU_UTILIZATION_SAMPLES, pds.lastTimestamp)
 		if ret != nvml.SUCCESS {
-			log.Errorf("Failed to get GPU utilization for device %s at index %d", uuid, i)
+			slog.Error("Failed to get GPU utilization for device", "uuid", uuid, "index", i)
 			continue
 		}
 		var setVal func(pmetric.NumberDataPoint, [8]byte)
@@ -96,7 +96,7 @@ func (p *producer) Produce(ms pmetric.MetricSlice) error {
 				dp.SetIntValue(value)
 			}
 		default:
-			log.Errorf("Unknown data type in GPU metrics: %d", valueType)
+			slog.Error("Unknown value data type in GPU metrics", "type", valueType)
 			continue
 		}
 

@@ -3,11 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	"github.com/open-telemetry/otel-arrow/pkg/otel/arrow_record"
-	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/ebpf-profiler/libpf"
 )
@@ -52,7 +52,7 @@ func (e *Exporter) AddProducer(p ProducerConfig) {
 }
 
 func (e *Exporter) makeStream(ctx context.Context) error {
-	log.Debugf("making new stream")
+	slog.Debug("making new stream")
 	endpoint, err := e.client.ArrowMetrics(ctx)
 	if err != nil {
 		return err
@@ -72,17 +72,17 @@ func (e *Exporter) report(ctx context.Context) error {
 		return err
 	}
 	for _, p := range e.producers {
-		log.Debugf("Running arrow metrics producer for scope %s", p.ScopeName)
+		slog.Debug("Running arrow metrics producer", "scope", p.ScopeName)
 		s := r.ScopeMetrics().AppendEmpty()
 		s.Scope().SetName(p.ScopeName)
 		ms := s.Metrics()
 		if err := p.Producer.Produce(ms); err != nil {
-			log.Warnf("Producer for scope %s failed to produce metrics: %v", p.ScopeName, err)
+			slog.Warn("Producer failed to produce metrics", "scope", p.ScopeName, "error", err)
 		}
 	}
 
 	dpc := m.DataPointCount()
-	log.Debugf("About to report arrow metrics with %d total data points", dpc)
+	slog.Debug("About to report arrow metrics", "data points", dpc)
 
 	retriesRemaining := 1
 	var err error
@@ -102,17 +102,17 @@ func (e *Exporter) report(ctx context.Context) error {
 		}
 		arrow, err = e.stream.arrowProducer.BatchArrowRecordsFromMetrics(m)
 		if err != nil {
-			log.Debugf("err on produce: %v", err)
+			slog.Warn("Error on produce", "error", err)
 			e.stream = nil
 			continue
 		}
 		err = e.stream.endpoint.Send(arrow)
 		if err != nil {
-			log.Debugf("err on send: %v", err)
+			slog.Warn("Error on send", "error", err)
 			e.stream = nil
 			continue
 		} else {
-			log.Debugf("send of %d succeeded", dpc)
+			slog.Warn("Send succeeded", "data points", dpc)
 		}
 		break
 	}
@@ -125,9 +125,9 @@ func (e *Exporter) report(ctx context.Context) error {
 }
 
 func (e *Exporter) Start(ctx context.Context) {
-	log.Infof("running arrow metrics exporter with %d producers", len(e.producers))
+	slog.Info("running arrow metrics exporter", "producers", len(e.producers))
 	if len(e.producers) == 0 {
-		return;
+		return
 	}
 	go func() {
 		tick := time.NewTicker(e.interval)

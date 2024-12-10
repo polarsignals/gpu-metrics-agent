@@ -1,10 +1,10 @@
 package main
 
 import (
+	"log/slog"
 	"math/rand/v2"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 
@@ -33,7 +33,7 @@ const PERIOD = time.Second / 6
 
 func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
 	for i, uuid := range p.deviceUuids {
-		log.Debugf("Collecting metrics for device %s at index %d", uuid, i)
+		slog.Debug("Collecting metrics for device", "uuid", uuid, "index", i)
 
 		m := ms.AppendEmpty()
 		g := m.SetEmptyGauge()
