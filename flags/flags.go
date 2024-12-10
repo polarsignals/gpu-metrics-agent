@@ -2,12 +2,12 @@ package flags
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
 	"github.com/alecthomas/kong"
 	parcaflags "github.com/parca-dev/parca-agent/flags"
-	log "github.com/sirupsen/logrus"
 )
 
 type ExitCode int
@@ -21,7 +21,7 @@ const (
 )
 
 func Failure(msg string, args ...interface{}) ExitCode {
-	log.Errorf(msg, args...)
+	slog.Error(msg, args...)
 	return ExitFailure
 }
 
@@ -32,8 +32,8 @@ type Flags struct {
 	ClockSyncInterval time.Duration `default:"3m" help:"How frequently to synchronize with the realtime clock."`
 
 	// which metrics producers (e.g. nvidia) to enable
-	MetricsProducer FlagsMetricProducer `embed:"" prefix:"metrics-producer-"`
-	RemoteStore     parcaflags.FlagsRemoteStore    `embed:"" prefix:"remote-store-"`
+	MetricsProducer FlagsMetricProducer         `embed:"" prefix:"metrics-producer-"`
+	RemoteStore     parcaflags.FlagsRemoteStore `embed:"" prefix:"remote-store-"`
 }
 
 // FlagsLocalStore provides logging configuration flags.
@@ -42,35 +42,40 @@ type FlagsLogs struct {
 	Format string `default:"logfmt" enum:"logfmt,json"           help:"Configure if structured logging as JSON or as logfmt"`
 }
 
-func (f FlagsLogs) logrusLevel() log.Level {
+// slogHandler returns a non-nil slog.Handler based on the log flags
+func (f FlagsLogs) slogHandler() slog.Handler {
+	level := slog.LevelInfo
 	switch f.Level {
 	case "error":
-		return log.ErrorLevel
+		level = slog.LevelError
 	case "warn":
-		return log.WarnLevel
+		level = slog.LevelWarn
 	case "info":
-		return log.InfoLevel
+		level = slog.LevelInfo
 	case "debug":
-		return log.DebugLevel
-	default:
-		return log.InfoLevel
+		level = slog.LevelDebug
 	}
-}
 
-func (f FlagsLogs) logrusFormatter() log.Formatter {
+	opts := &slog.HandlerOptions{
+		Level: level,
+	}
 	switch f.Format {
 	case "logfmt":
-		return &log.TextFormatter{}
+		return slog.NewTextHandler(os.Stderr, opts)
 	case "json":
-		return &log.JSONFormatter{}
+		return slog.NewJSONHandler(os.Stderr, opts)
 	default:
-		return &log.TextFormatter{}
+		return slog.NewTextHandler(os.Stderr, opts)
 	}
 }
 
 func (f FlagsLogs) ConfigureLogger() {
-	log.SetLevel(f.logrusLevel())
-	log.SetFormatter(f.logrusFormatter())
+	handler := f.slogHandler()
+	if handler == nil {
+		panic("slogHandler documented to return non-nil")
+	}
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 }
 
 // FlagsMetricProducer contains flags that configure arrow metrics production.
