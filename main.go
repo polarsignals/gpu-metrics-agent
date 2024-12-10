@@ -9,10 +9,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
-	// parcaflags "github.com/parca-dev/parca-agent/flags"
 	"github.com/oklog/run"
-	"github.com/polarsignals/gpu-metrics-agent/flags"
+	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
@@ -64,14 +62,14 @@ func fetchBuildInfo() (*buildInfo, error) {
 	return &buildInfo, nil
 }
 
-func mainWithExitCode() flags.ExitCode {
+func mainWithExitCode() ExitCode {
 	ctx := context.Background()
 
 	// Fetch build info such as the git revision we are based off
 	buildInfo, err := fetchBuildInfo()
 	if err != nil {
 		fmt.Println("failed to fetch build info: %w", err) //nolint:forbidigo
-		return flags.ExitFailure
+		return ExitFailure
 	}
 	if commit == "" {
 		commit = buildInfo.VcsRevision
@@ -83,15 +81,15 @@ func mainWithExitCode() flags.ExitCode {
 		goArch = buildInfo.GoArch
 	}
 
-	f, err := flags.Parse()
+	f, err := Parse()
 	if err != nil {
 		slog.Error("Failed to parse flags", "error", err)
-		return flags.ExitParseError
+		return ExitParseError
 	}
 
 	if f.Version {
 		fmt.Printf("parca-agent, version %s (commit: %s, date: %s), arch: %s\n", version, commit, date, goArch) //nolint:forbidigo
-		return flags.ExitSuccess
+		return ExitSuccess
 	}
 
 	reg := prometheus.NewRegistry()
@@ -106,7 +104,7 @@ func mainWithExitCode() flags.ExitCode {
 	grpcConn, err := f.RemoteStore.WaitGrpcEndpoint(ctx, reg, noop.NewTracerProvider())
 	if err != nil {
 		slog.Error("Failed to connect to server", "error", err)
-		return flags.ExitFailure
+		return ExitFailure
 	}
 	defer grpcConn.Close()
 
@@ -116,7 +114,7 @@ func mainWithExitCode() flags.ExitCode {
 	if f.MetricsProducer.NvidiaGpu {
 		nvidia, err := NewNvidiaProducer()
 		if err != nil {
-			return flags.Failure("Failed to instantiate nvidia metrics producer: %v. Are the Nvidia drivers installed?", err)
+			return Failure("Failed to instantiate nvidia metrics producer: %v. Are the Nvidia drivers installed?", err)
 		}
 		arrowMetricsExporter.AddProducer(ProducerConfig{
 			Producer:  nvidia,
@@ -147,8 +145,8 @@ func mainWithExitCode() flags.ExitCode {
 	err = g.Run()
 	if err != nil {
 		slog.Error("metrics exporter exited with error", "error", err)
-		return flags.ExitFailure
+		return ExitFailure
 	}
 
-	return flags.ExitSuccess
+	return ExitSuccess
 }
