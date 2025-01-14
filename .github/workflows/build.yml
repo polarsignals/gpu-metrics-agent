@@ -1,0 +1,77 @@
+name: Artifacts
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - v*
+    branches:
+      - '**'
+
+jobs:
+  artifacts:
+    name: Goreleaser release
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: write
+    container:
+      image: docker.io/goreleaser/goreleaser-cross:v1.22.4
+      options: --privileged
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # https://github.com/actions/checkout/issues/766
+      - name: Add repository directory to the git global config as a safe directory
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch all tags
+        run: git fetch --force --tags
+
+      - name: Login to registry
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Login to registry
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Run Goreleaser release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: goreleaser release --clean --verbose
+
+      - name: Run Goreleaser snapshot
+        run: |
+          goreleaser release --clean --verbose --snapshot
+
+      - name: Set snapshot tag
+        id: vars
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        run: |
+          echo "tag=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "git_tag=v0.0.0" >> $GITHUB_OUTPUT
+#         Use this again once we have a frist release
+#         echo "git_tag=$(git describe --tags --abbrev=0)" >> $GITHUB_OUTPUT
+
+      - name: Push snapshot images
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+        run: |
+          docker tag ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.git_tag }}-amd64 ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64
+          docker push ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64
+          docker manifest create ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }} --amend ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64
+          docker manifest annotate ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }} ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64 --os linux --arch amd64
+          docker manifest push ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}
