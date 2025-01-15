@@ -1,4 +1,4 @@
-FROM busybox
+FROM busybox:glibc
 USER root
 
 COPY gpu-metrics-agent /gpu-metrics-agent
