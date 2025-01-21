@@ -2,7 +2,6 @@ package main
 
 import (
 	"log/slog"
-	"math/rand/v2"
 	"time"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -41,19 +40,25 @@ func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
 		now := time.Now()
 		m.SetName("gpu_utilization_percent")
 
-		for i, uuid := range p.deviceUuids {
-			lastTimeRounded := p.lastTime.Truncate(PERIOD).Add(PERIOD)
+		lastTimeRounded := p.lastTime.Truncate(PERIOD).Add(PERIOD)
 
-			for lastTimeRounded.Before(now) {
-				dp := g.DataPoints().AppendEmpty()
-				dp.SetIntValue(int64(rand.IntN(100)))
-				dp.SetTimestamp(pcommon.NewTimestampFromTime(lastTimeRounded))
-				lastTimeRounded = lastTimeRounded.Add(PERIOD)
-				dp.Attributes().PutStr("UUID", uuid)
-				dp.Attributes().PutInt("index", int64(i))
+		for lastTimeRounded.Before(now) {
+			// This will make the value go up and down between 0 and 100 based on the timestamp's seconds.
+			v := lastTimeRounded.Unix() % 200
+			if v > 100 {
+				v = 200 - v
 			}
+
+			dp := g.DataPoints().AppendEmpty()
+			dp.Attributes().PutStr("UUID", uuid)
+			dp.Attributes().PutInt("index", int64(i))
+			dp.SetTimestamp(pcommon.NewTimestampFromTime(lastTimeRounded))
+			dp.SetIntValue(v)
+
+			lastTimeRounded = lastTimeRounded.Add(PERIOD)
 		}
 		p.lastTime = now
 	}
+
 	return nil
 }
