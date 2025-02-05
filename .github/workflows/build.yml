@@ -72,6 +72,9 @@ jobs:
         run: |
           docker tag ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.git_tag }}-amd64 ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64
           docker push ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64
+          docker tag ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.git_tag }}-arm64 ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-arm64
+          docker push ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-arm64
           docker manifest create ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }} --amend ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64
           docker manifest annotate ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }} ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-amd64 --os linux --arch amd64
+          docker manifest annotate ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }} ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}-arm64 --os linux --arch arm64
           docker manifest push ghcr.io/polarsignals/gpu-metrics-agent:${{ steps.vars.outputs.tag }}
