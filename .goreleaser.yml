@@ -1,12 +1,12 @@
-version: 2
 builds:
-  - id: linux-amd64
+  - id: linux
     main: ./
     binary: gpu-metrics-agent
     goos:
       - linux
     goarch:
       - amd64
+      - arm64
     flags:
       - -mod=readonly
       - -trimpath
@@ -14,7 +14,7 @@ builds:
     ldflags:
       # https://goreleaser.com/customization/build/#reproducible-builds
       # {{.CommitDate}} is the date of the commit to make builds reproducible.
-      - -X main.version={{.Version}} -X main.commit={{.FullCommit}} -X main.date={{.CommitDate}} -X main.goArch=amd64
+      - -X main.version={{.Version}} -X main.commit={{.FullCommit}} -X main.date={{.CommitDate}}
     tags:
       - osusergo
       - netgo
