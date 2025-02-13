@@ -1,6 +1,7 @@
 package main
 
 import (
+	"hash/fnv"
 	"log/slog"
 	"time"
 
@@ -40,11 +41,16 @@ func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
 		now := time.Now()
 		m.SetName("gpu_utilization_percent")
 
+		// Create jitter based on the uuid so metrics values don't overlap.
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(uuid))
+		jitter := int64(h.Sum32() % 100)
+
 		lastTimeRounded := p.lastTime.Truncate(PERIOD).Add(PERIOD)
 
 		for lastTimeRounded.Before(now) {
 			// This will make the value go up and down between 0 and 100 based on the timestamp's seconds.
-			v := lastTimeRounded.Unix() % 200
+			v := (lastTimeRounded.Unix() - jitter) % 200
 			if v > 100 {
 				v = 200 - v
 			}
