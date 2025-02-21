@@ -3,37 +3,37 @@ package main
 import (
 	"hash/fnv"
 	"log/slog"
+	"maps"
+	"slices"
 	"time"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-
-	"github.com/google/uuid"
 )
 
 type MockProducer struct {
-	deviceUuids []string
-	lastTime    time.Time
+	deviceLastTime map[string]time.Time
 }
 
 // NewNvidiaMockProducer creates a Producer that generates random data to send.
 func NewNvidiaMockProducer(nDevices int, samplesFromTime time.Time) *MockProducer {
-	deviceUuids := make([]string, 0, nDevices)
+	deviceLastTime := make(map[string]time.Time, nDevices)
 	for range nDevices {
-		deviceUuids = append(deviceUuids, uuid.New().String())
+		id := uuid.New().String()
+		deviceLastTime[id] = samplesFromTime
 	}
 
-	return &MockProducer{
-		deviceUuids: deviceUuids,
-		lastTime:    samplesFromTime,
-	}
+	return &MockProducer{deviceLastTime: deviceLastTime}
 }
 
 const PERIOD = time.Second / 6
 
 func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
-	for i, uuid := range p.deviceUuids {
-		slog.Debug("Collecting metrics for device", "uuid", uuid, "index", i)
+	deviceIDs := slices.Sorted(maps.Keys(p.deviceLastTime)) // Maps are unsorted, so we get its keys and sort
+
+	for i, id := range deviceIDs {
+		slog.Info("Collecting metrics for device", "uuid", id, "index", i)
 
 		m := ms.AppendEmpty()
 		g := m.SetEmptyGauge()
@@ -43,10 +43,10 @@ func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
 
 		// Create jitter based on the uuid so metrics values don't overlap.
 		h := fnv.New32a()
-		_, _ = h.Write([]byte(uuid))
+		_, _ = h.Write([]byte(id))
 		jitter := int64(h.Sum32() % 100)
 
-		lastTimeRounded := p.lastTime.Truncate(PERIOD).Add(PERIOD)
+		lastTimeRounded := p.deviceLastTime[id].Truncate(PERIOD).Add(PERIOD)
 
 		for lastTimeRounded.Before(now) {
 			// This will make the value go up and down between 0 and 100 based on the timestamp's seconds.
@@ -56,14 +56,14 @@ func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
 			}
 
 			dp := g.DataPoints().AppendEmpty()
-			dp.Attributes().PutStr("UUID", uuid)
+			dp.Attributes().PutStr("UUID", id)
 			dp.Attributes().PutInt("index", int64(i))
 			dp.SetTimestamp(pcommon.NewTimestampFromTime(lastTimeRounded))
 			dp.SetIntValue(v)
 
 			lastTimeRounded = lastTimeRounded.Add(PERIOD)
 		}
-		p.lastTime = now
+		p.deviceLastTime[id] = now
 	}
 
 	return nil
