@@ -16,7 +16,7 @@ import (
 const (
 	attributeIndex                        = "index"
 	attributeUUID                         = "uuid"
-	metricNameGPUMemoryUtilizationPercent = "gpu_utilization_memory_percent"
+	metricNameGPUUtilizationMemoryPercent = "gpu_utilization_memory_percent"
 	metricNameGPUUtilizationPercent       = "gpu_utilization_percent"
 	metricNameGPUPowerWatt                = "gpu_power_watt"
 )
@@ -122,7 +122,7 @@ func (p *producer) produceUtilization(pds perDeviceState, uuid string, index int
 func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
 	m := ms.AppendEmpty()
 	g := m.SetEmptyGauge()
-	m.SetName(metricNameGPUMemoryUtilizationPercent)
+	m.SetName(metricNameGPUUtilizationMemoryPercent)
 
 	sampleType, samples, ret := pds.d.GetSamples(nvml.MEMORY_UTILIZATION_SAMPLES, pds.lastTimestamp)
 	if !errors.Is(ret, nvml.SUCCESS) {
