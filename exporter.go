@@ -113,7 +113,7 @@ func (e *Exporter) report(ctx context.Context) error {
 			e.stream = nil
 			continue
 		} else {
-			slog.Warn("Send succeeded", "data points", dpc)
+			slog.Info("Send succeeded", "data points", dpc)
 		}
 		break
 	}
