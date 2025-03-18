@@ -61,12 +61,12 @@ func (p *MockProducer) Produce(ms pmetric.MetricSlice) error {
 			// Create jitter based on the uuid so metrics values don't overlap.
 			h := fnv.New32a()
 			_, _ = h.Write([]byte(id))
-			jitter := int64(h.Sum32() % 100)
+			jitter := int64(h.Sum32() % 300)
 
 			metricLastTime := lastTimeRounded
 
 			for metricLastTime.Before(now) {
-				mockDataIndex := (metricLastTime.Unix() - jitter) % 60
+				mockDataIndex := (metricLastTime.Unix() - jitter) % 300
 				var v int64
 				if mockDataIndex < 30 {
 					v = samples[mockDataIndex]
