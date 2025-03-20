@@ -15,12 +15,12 @@ import (
 // Mock data extract from a real world PyTorch.
 var (
 	mockData = map[string][]int64{
-		metricNameGPUPowerWatt:                {69382, 69382, 69382, 73170, 73170, 73170, 75577, 75577, 75577, 69218, 69218, 69218, 73523, 73523, 73523, 46365, 46365, 46365, 73285, 73285, 73285, 74602, 74602, 74602, 66618, 66618, 66618, 72183, 72183, 72183},
+		metricNameGPUPowerWatt:                {69, 69, 69, 73, 73, 73, 75, 75, 75, 69, 69, 69, 73, 73, 73, 46, 46, 46, 73, 73, 73, 74, 74, 74, 66, 66, 66, 72, 72, 72},
 		metricNameGPUUtilizationMemoryPercent: {0, 57, 57, 53, 54, 53, 57, 13, 46, 55, 57, 53, 56, 54, 52, 12, 55, 54, 54, 55, 56, 54, 3, 30, 55, 56, 58, 55, 53, 0},
 		metricNameGPUUtilizationPercent:       {3, 70, 70, 65, 67, 65, 70, 17, 57, 67, 70, 66, 69, 67, 64, 15, 68, 67, 66, 68, 69, 67, 4, 37, 67, 69, 72, 67, 65, 0},
 	}
 	mockDataIdle = map[string]int64{
-		metricNameGPUPowerWatt:                6123, // idle at ~6W
+		metricNameGPUPowerWatt:                6, // idle at ~6W
 		metricNameGPUUtilizationMemoryPercent: 0,
 		metricNameGPUUtilizationPercent:       0,
 	}
