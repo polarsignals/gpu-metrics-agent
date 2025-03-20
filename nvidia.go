@@ -5,12 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"log/slog"
-	"sort"
-
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"log/slog"
+	"sort"
 )
 
 const (
@@ -23,7 +22,7 @@ const (
 
 type perDeviceState struct {
 	d             nvml.Device
-	lastTimestamp uint64
+	lastTimestamp map[string]uint64
 }
 
 type producer struct {
@@ -46,8 +45,12 @@ func NewNvidiaProducer() (*producer, error) {
 			return nil, fmt.Errorf("failed to get handle for Nvidia device %d: %v", i, nvml.ErrorString(ret))
 		}
 		devices[i] = perDeviceState{
-			d:             device,
-			lastTimestamp: 0,
+			d: device,
+			lastTimestamp: map[string]uint64{
+				metricNameGPUPowerWatt:                0,
+				metricNameGPUUtilizationMemoryPercent: 0,
+				metricNameGPUUtilizationPercent:       0,
+			},
 		}
 	}
 	return &producer{
@@ -87,44 +90,13 @@ func (p *producer) Produce(ms pmetric.MetricSlice) error {
 }
 
 func (p *producer) produceUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+	metricName := metricNameGPUUtilizationPercent
+
 	m := ms.AppendEmpty()
 	g := m.SetEmptyGauge()
-	m.SetName(metricNameGPUUtilizationPercent)
+	m.SetName(metricName)
 
-	sampleType, samples, ret := pds.d.GetSamples(nvml.GPU_UTILIZATION_SAMPLES, pds.lastTimestamp)
-	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
-	}
-	getValue, err := valueGetter(sampleType)
-	if err != nil {
-		return err
-	}
-
-	sort.Slice(samples, func(i, j int) bool {
-		return samples[i].TimeStamp < samples[j].TimeStamp
-	})
-
-	for _, s := range samples {
-		pds.lastTimestamp = max(pds.lastTimestamp, s.TimeStamp)
-
-		value := getValue(s.SampleValue).(int64)
-
-		dp := g.DataPoints().AppendEmpty()
-		dp.Attributes().PutStr(attributeUUID, uuid)
-		dp.Attributes().PutInt(attributeIndex, int64(index))
-		dp.SetTimestamp(pcommon.Timestamp(s.TimeStamp * 1000)) // micros to nanos
-		dp.SetIntValue(value)
-	}
-
-	return nil
-}
-
-func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
-	m := ms.AppendEmpty()
-	g := m.SetEmptyGauge()
-	m.SetName(metricNameGPUUtilizationMemoryPercent)
-
-	sampleType, samples, ret := pds.d.GetSamples(nvml.MEMORY_UTILIZATION_SAMPLES, pds.lastTimestamp)
+	sampleType, samples, ret := pds.d.GetSamples(nvml.GPU_UTILIZATION_SAMPLES, pds.lastTimestamp[metricName])
 	if !errors.Is(ret, nvml.SUCCESS) {
 		return ret
 	}
@@ -142,7 +114,46 @@ func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, ind
 			continue
 		}
 
-		pds.lastTimestamp = max(pds.lastTimestamp, s.TimeStamp)
+		pds.lastTimestamp[metricName] = max(pds.lastTimestamp[metricName], s.TimeStamp)
+
+		value := getValue(s.SampleValue).(int64)
+
+		dp := g.DataPoints().AppendEmpty()
+		dp.Attributes().PutStr(attributeUUID, uuid)
+		dp.Attributes().PutInt(attributeIndex, int64(index))
+		dp.SetTimestamp(pcommon.Timestamp(s.TimeStamp * 1000)) // micros to nanos
+		dp.SetIntValue(value)
+	}
+
+	return nil
+}
+
+func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+	metricName := metricNameGPUUtilizationMemoryPercent
+
+	m := ms.AppendEmpty()
+	g := m.SetEmptyGauge()
+	m.SetName(metricName)
+
+	sampleType, samples, ret := pds.d.GetSamples(nvml.MEMORY_UTILIZATION_SAMPLES, pds.lastTimestamp[metricName])
+	if !errors.Is(ret, nvml.SUCCESS) {
+		return ret
+	}
+	getValue, err := valueGetter(sampleType)
+	if err != nil {
+		return err
+	}
+
+	sort.Slice(samples, func(i, j int) bool {
+		return samples[i].TimeStamp < samples[j].TimeStamp
+	})
+
+	for _, s := range samples {
+		if s.TimeStamp == 0 {
+			continue
+		}
+
+		pds.lastTimestamp[metricName] = max(pds.lastTimestamp[metricName], s.TimeStamp)
 
 		value := getValue(s.SampleValue).(int64)
 		dp := g.DataPoints().AppendEmpty()
@@ -156,11 +167,13 @@ func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, ind
 }
 
 func (p *producer) producePowerConsumption(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+	metricName := metricNameGPUPowerWatt
+
 	m := ms.AppendEmpty()
 	g := m.SetEmptyGauge()
-	m.SetName(metricNameGPUPowerWatt)
+	m.SetName(metricName)
 
-	sampleType, samples, ret := pds.d.GetSamples(nvml.TOTAL_POWER_SAMPLES, pds.lastTimestamp)
+	sampleType, samples, ret := pds.d.GetSamples(nvml.TOTAL_POWER_SAMPLES, pds.lastTimestamp[metricName])
 	if !errors.Is(ret, nvml.SUCCESS) {
 		return ret
 	}
@@ -185,7 +198,7 @@ func (p *producer) producePowerConsumption(pds perDeviceState, uuid string, inde
 			continue
 		}
 
-		pds.lastTimestamp = max(pds.lastTimestamp, s.TimeStamp)
+		pds.lastTimestamp[metricName] = max(pds.lastTimestamp[metricName], s.TimeStamp)
 
 		dp := g.DataPoints().AppendEmpty()
 		dp.Attributes().PutStr(attributeUUID, uuid)
