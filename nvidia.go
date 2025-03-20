@@ -177,8 +177,8 @@ func (p *producer) producePowerConsumption(pds perDeviceState, uuid string, inde
 		if s.TimeStamp == 0 {
 			continue
 		}
-		value := getValue(s.SampleValue).(int64)
-		if value > 10000*1000 { // ignore if above 10k watt
+		value := getValue(s.SampleValue).(int64) / 1000 // divide from milli watts to watts
+		if value > 10*1000 {                            // ignore if above 10k watt
 			continue
 		}
 		if value < 0 { // ignore negative power consumption
