@@ -89,7 +89,7 @@ func (e *Exporter) report(ctx context.Context) error {
 	var err error
 	var arrow *arrowpb.BatchArrowRecords
 	for retriesRemaining >= 0 {
-		retriesRemaining -= 1
+		retriesRemaining--
 		if e.stream == nil {
 			err = e.makeStream(ctx)
 			if err != nil {
@@ -112,9 +112,8 @@ func (e *Exporter) report(ctx context.Context) error {
 			slog.Warn("Error on send", "error", err)
 			e.stream = nil
 			continue
-		} else {
-			slog.Info("Send succeeded", "data points", dpc)
 		}
+		slog.Info("Send succeeded", "data points", dpc)
 		break
 	}
 
@@ -128,7 +127,7 @@ func (e *Exporter) report(ctx context.Context) error {
 func (e *Exporter) Start(ctx context.Context) error {
 	slog.Info("running arrow metrics exporter", "producers", len(e.producers))
 	if len(e.producers) == 0 {
-		return errors.New("No producers configured")
+		return errors.New("no producers configured")
 	}
 	tick := time.NewTicker(e.interval)
 	defer tick.Stop()
@@ -138,7 +137,7 @@ func (e *Exporter) Start(ctx context.Context) error {
 			return nil
 		case <-tick.C:
 			if err := e.report(ctx); err != nil {
-				fmt.Errorf("Failed to send arrow metrics: %v", err)
+				return fmt.Errorf("failed to send arrow metrics: %v", err)
 			}
 			tick.Reset(libpf.AddJitter(e.interval, 0.2))
 		}

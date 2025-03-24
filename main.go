@@ -132,7 +132,6 @@ func mainWithExitCode() ExitCode {
 			Producer:  mock,
 			ScopeName: scopeName,
 		})
-
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var g run.Group
