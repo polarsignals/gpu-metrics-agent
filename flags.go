@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/alecthomas/kong"
-	parcaflags "github.com/parca-dev/parca-agent/flags"
 )
 
 type ExitCode int
@@ -32,8 +31,27 @@ type Flags struct {
 	ClockSyncInterval time.Duration `default:"3m" help:"How frequently to synchronize with the realtime clock."`
 
 	// which metrics producers (e.g. nvidia) to enable
-	MetricsProducer FlagsMetricProducer         `embed:"" prefix:"metrics-producer-"`
-	RemoteStore     parcaflags.FlagsRemoteStore `embed:"" prefix:"remote-store-"`
+	MetricsProducer FlagsMetricProducer `embed:"" prefix:"metrics-producer-"`
+	RemoteStore     FlagsRemoteStore    `embed:"" prefix:"remote-store-"`
+}
+
+// FlagsRemoteStore provides remote store configuration flags.
+type FlagsRemoteStore struct {
+	Address            string `help:"gRPC address to send profiles and symbols to."`
+	BearerToken        string `kong:"help='Bearer token to authenticate with store.',env='PARCA_BEARER_TOKEN'"`
+	BearerTokenFile    string `help:"File to read bearer token from to authenticate with store."`
+	Insecure           bool   `help:"Send gRPC requests via plaintext instead of TLS."`
+	InsecureSkipVerify bool   `help:"Skip TLS certificate verification."`
+
+	BatchWriteInterval time.Duration `default:"10s"   help:"[deprecated] Interval between batch remote client writes. Leave this empty to use the default value of 10s."`
+	RPCLoggingEnable   bool          `default:"false" help:"[deprecated] Enable gRPC logging."`
+	RPCUnaryTimeout    time.Duration `default:"5m"    help:"[deprecated] Maximum timeout window for unary gRPC requests including retries."`
+
+	GRPCMaxCallRecvMsgSize   int           `default:"33554432" help:"The maximum message size the client can receive."`
+	GRPCMaxCallSendMsgSize   int           `default:"33554432" help:"The maximum message size the client can send."`
+	GRPCStartupBackoffTime   time.Duration `default:"1m" help:"The time between failed gRPC requests during startup phase."`
+	GRPCConnectionTimeout    time.Duration `default:"3s" help:"The timeout duration for gRPC connection establishment."`
+	GRPCMaxConnectionRetries uint32        `default:"5" help:"The maximum number of retries to establish a gRPC connection."`
 }
 
 // FlagsLocalStore provides logging configuration flags.

@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	"github.com/open-telemetry/otel-arrow/pkg/otel/arrow_record"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/ebpf-profiler/libpf"
 )
 
 type Producer interface {
@@ -139,7 +139,17 @@ func (e *Exporter) Start(ctx context.Context) error {
 			if err := e.report(ctx); err != nil {
 				return fmt.Errorf("failed to send arrow metrics: %v", err)
 			}
-			tick.Reset(libpf.AddJitter(e.interval, 0.2))
+			tick.Reset(addJitter(e.interval, 0.2))
 		}
 	}
+}
+
+// addJitter adds +/- jitter (jitter is [0..1]) to baseDuration
+// originally copied from go.opentelemetry.io/epbf-profiler
+func addJitter(baseDuration time.Duration, jitter float64) time.Duration {
+	if jitter < 0.0 || jitter > 1.0 {
+		return baseDuration
+	}
+	//nolint:gosec
+	return time.Duration((1 + jitter - 2*jitter*rand.Float64()) * float64(baseDuration))
 }
