@@ -27,14 +27,21 @@ type stream struct {
 	arrowProducer *arrow_record.Producer
 }
 
+type Collector interface {
+	Collect(ctx context.Context) (pmetric.MetricSlice, error)
+}
+
 type Exporter struct {
-	client arrowpb.ArrowMetricsServiceClient
+	client     arrowpb.ArrowMetricsServiceClient
+	collectors []Collector
+
 	// NB: someday we might want to have several producer groups,
 	// each of which collects at different intervals.
 	// For now we are only collecting one scope (GPU metrics)
 	// so the global interval is fine.
-	interval      time.Duration
-	producers     []ProducerConfig
+
+	interval time.Duration
+	//producers     []ProducerConfig
 	resourceAttrs map[string]any
 	stream        *stream
 }
@@ -48,9 +55,13 @@ func NewExporter(client arrowpb.ArrowMetricsServiceClient, interval time.Duratio
 	}
 }
 
-func (e *Exporter) AddProducer(p ProducerConfig) {
-	e.producers = append(e.producers, p)
+func (e *Exporter) RegisterCollector(c Collector) {
+	e.collectors = append(e.collectors, c)
 }
+
+//func (e *Exporter) AddProducer(p ProducerConfig) {
+//	e.producers = append(e.producers, p)
+//}
 
 func (e *Exporter) makeStream(ctx context.Context) error {
 	slog.Debug("making new stream")
@@ -66,24 +77,37 @@ func (e *Exporter) makeStream(ctx context.Context) error {
 	return nil
 }
 
-func (e *Exporter) report(ctx context.Context) error {
+func (e *Exporter) collect(ctx context.Context) error {
 	m := pmetric.NewMetrics()
 	r := m.ResourceMetrics().AppendEmpty()
 	if err := r.Resource().Attributes().FromRaw(e.resourceAttrs); err != nil {
 		return err
 	}
-	for _, p := range e.producers {
-		slog.Debug("Running arrow metrics producer", "scope", p.ScopeName)
-		s := r.ScopeMetrics().AppendEmpty()
-		s.Scope().SetName(p.ScopeName)
-		ms := s.Metrics()
-		if err := p.Producer.Produce(ms); err != nil {
-			slog.Warn("Producer failed to produce metrics", "scope", p.ScopeName, "error", err)
+
+	_ = r.ScopeMetrics().AppendEmpty()
+	for _, c := range e.collectors {
+		_, err := c.Collect(ctx)
+		if err != nil {
+			return err
 		}
+		//
+		//if mss.Len() > 0 {
+		//	mss.MoveAndAppendTo(s.Metrics())
+		//}
 	}
 
+	//for _, p := range e.producers {
+	//	slog.Debug("Running arrow metrics producer", "scope", p.ScopeName)
+	//	s := r.ScopeMetrics().AppendEmpty()
+	//	s.Scope().SetName(p.ScopeName)
+	//	ms := s.Metrics()
+	//	if err := p.Producer.Produce(ms); err != nil {
+	//		slog.Warn("Producer failed to produce metrics", "scope", p.ScopeName, "error", err)
+	//	}
+	//}
+
 	dpc := m.DataPointCount()
-	slog.Debug("About to report arrow metrics", "data points", dpc)
+	slog.Debug("About to collect arrow metrics", "data points", dpc)
 
 	retriesRemaining := 1
 	var err error
@@ -125,10 +149,15 @@ func (e *Exporter) report(ctx context.Context) error {
 }
 
 func (e *Exporter) Start(ctx context.Context) error {
-	slog.Info("running arrow metrics exporter", "producers", len(e.producers))
-	if len(e.producers) == 0 {
-		return errors.New("no producers configured")
+	//slog.Info("running arrow metrics exporter", "producers", len(e.producers))
+	//if len(e.producers) == 0 {
+	//	return errors.New("no producers configured")
+	//}
+	slog.Info("running arrow metrics exporter", "collectors", len(e.collectors))
+	if len(e.collectors) == 0 {
+		return errors.New("no collectors configured")
 	}
+
 	tick := time.NewTicker(e.interval)
 	defer tick.Stop()
 	for {
@@ -136,7 +165,7 @@ func (e *Exporter) Start(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-tick.C:
-			if err := e.report(ctx); err != nil {
+			if err := e.collect(ctx); err != nil {
 				return fmt.Errorf("failed to send arrow metrics: %v", err)
 			}
 			tick.Reset(libpf.AddJitter(e.interval, 0.2))

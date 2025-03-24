@@ -110,29 +110,7 @@ func mainWithExitCode() ExitCode {
 
 	arrowClient := arrowpb.NewArrowMetricsServiceClient(grpcConn)
 	arrowMetricsExporter := NewExporter(arrowClient, time.Second*10, map[string]any{"node": f.Node})
-	const nvidiaMetricsScopeName = "parca.nvidia_gpu_metrics"
-	if f.MetricsProducer.NvidiaGpu {
-		nvidia, err := NewNvidiaProducer()
-		if err != nil {
-			return Failure("Failed to instantiate nvidia metrics producer: %v. Are the Nvidia drivers installed?", err)
-		}
-		arrowMetricsExporter.AddProducer(ProducerConfig{
-			Producer:  nvidia,
-			ScopeName: nvidiaMetricsScopeName,
-		})
-	}
-	if f.MetricsProducer.NvidiaGpuMock {
-		mock := NewNvidiaMockProducer(3, time.Now())
-		scopeName := nvidiaMetricsScopeName
-		if f.MetricsProducer.NvidiaGpu {
-			// don't conflict with the real producer
-			scopeName = scopeName + "_mock"
-		}
-		arrowMetricsExporter.AddProducer(ProducerConfig{
-			Producer:  mock,
-			ScopeName: scopeName,
-		})
-	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	var g run.Group
 	g.Add(func() error {
@@ -140,6 +118,37 @@ func mainWithExitCode() ExitCode {
 	}, func(error) {
 		cancel()
 	})
+
+	const nvidiaMetricsScopeName = "parca.nvidia_gpu_metrics"
+	if f.MetricsProducer.NvidiaGpu {
+		nvidia, err := NewNvidiaProducer()
+		if err != nil {
+			return Failure("Failed to instantiate nvidia metrics producer: %v. Are the Nvidia drivers installed?", err)
+		}
+		arrowMetricsExporter.RegisterCollector(nvidia)
+
+		g.Add(func() error {
+			return nvidia.Produce(ctx)
+		}, func(err error) {
+		})
+
+		//arrowMetricsExporter.AddProducer(ProducerConfig{
+		//	Producer:  nvidia,
+		//	ScopeName: nvidiaMetricsScopeName,
+		//})
+	}
+	//if f.MetricsProducer.NvidiaGpuMock {
+	//	mock := NewNvidiaMockProducer(3, time.Now())
+	//	scopeName := nvidiaMetricsScopeName
+	//	if f.MetricsProducer.NvidiaGpu {
+	//		// don't conflict with the real producer
+	//		scopeName = scopeName + "_mock"
+	//	}
+	//	arrowMetricsExporter.AddProducer(ProducerConfig{
+	//		Producer:  mock,
+	//		ScopeName: scopeName,
+	//	})
+	//}
 
 	err = g.Run()
 	if err != nil {

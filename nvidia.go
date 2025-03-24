@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/oklog/run"
 	"log/slog"
 	"sort"
+	"sync"
+	"time"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -22,12 +26,15 @@ const (
 )
 
 type perDeviceState struct {
-	d             nvml.Device
-	lastTimestamp map[string]uint64
+	d nvml.Device
+	//lastTimestamp map[string]uint64
 }
 
 type NvidiaProducer struct {
 	devices []perDeviceState
+
+	mu          sync.RWMutex
+	metricSlice pmetric.MetricSlice
 }
 
 func NewNvidiaProducer() (*NvidiaProducer, error) {
@@ -47,19 +54,36 @@ func NewNvidiaProducer() (*NvidiaProducer, error) {
 		}
 		devices[i] = perDeviceState{
 			d: device,
-			lastTimestamp: map[string]uint64{
-				metricNameGPUPowerWatt:                0,
-				metricNameGPUUtilizationMemoryPercent: 0,
-				metricNameGPUUtilizationPercent:       0,
-			},
+			//lastTimestamp: map[string]uint64{
+			//	metricNameGPUPowerWatt:                0,
+			//	metricNameGPUUtilizationMemoryPercent: 0,
+			//	metricNameGPUUtilizationPercent:       0,
+			//},
 		}
 	}
 	return &NvidiaProducer{
 		devices: devices,
+
+		mu:          sync.RWMutex{},
+		metricSlice: pmetric.NewMetricSlice(),
 	}, nil
 }
 
-func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
+func (p *NvidiaProducer) Collect(_ context.Context) (pmetric.MetricSlice, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	collect := p.metricSlice
+
+	// reset the metricSlice for new batches
+	//p.metricSlice = pmetric.NewMetricSlice()
+
+	return collect, nil
+}
+
+func (p *NvidiaProducer) Produce(ctx context.Context) error {
+	var g run.Group
+
 	for i, pds := range p.devices {
 		uuid, ret := pds.d.GetUUID()
 		if ret != nvml.SUCCESS {
@@ -68,42 +92,134 @@ func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
 		}
 		slog.Debug("Collecting metrics for device", "uuid", uuid, "index", i)
 
-		err := p.produceUtilization(pds, uuid, i, ms)
-		if err != nil {
-			slog.Error("Failed to get GPU utilization for device", "uuid", uuid, "index", i, "error", err)
-			continue
-		}
+		{
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
 
-		err = p.produceMemoryUtilization(pds, uuid, i, ms)
-		if err != nil {
-			slog.Error("Failed to get GPU memory utilization for device", "uuid", uuid, "index", i, "error", err)
-			continue
-		}
+			g.Add(func() error {
+				for {
+					select {
+					case <-ctx.Done():
+						ticker.Stop()
+						return nil
+					case <-ticker.C:
+						slog.Info("Collecting utilization metrics for device", "uuid", uuid, "index", i)
+						m, err := produceUtilization(pds, uuid, i)
+						if err != nil {
+							return err
+						}
+						p.mu.Lock()
+						ms := p.metricSlice.AppendEmpty()
+						m.CopyTo(ms)
+						p.mu.Unlock()
+					}
+				}
 
-		err = p.producePowerConsumption(pds, uuid, i, ms)
-		if err != nil {
-			slog.Error("Failed to get GPU memory utilization for device", "uuid", uuid, "index", i, "error", err)
-			continue
+			}, func(err error) {
+				ticker.Stop()
+			})
+		}
+		{
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+
+			g.Add(func() error {
+
+				for {
+					select {
+					case <-ctx.Done():
+						ticker.Stop()
+						return nil
+					case <-ticker.C:
+						slog.Info("Collecting memory utilization metrics for device", "uuid", uuid, "index", i)
+						m, err := produceMemoryUtilization(uuid, i)
+						if err != nil {
+							return err
+						}
+						p.mu.Lock()
+						ms := p.metricSlice.AppendEmpty()
+						m.CopyTo(ms)
+						p.mu.Unlock()
+					}
+				}
+
+			}, func(err error) {
+				ticker.Stop()
+			})
+		}
+		{
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+
+			g.Add(func() error {
+				for {
+					select {
+					case <-ctx.Done():
+						ticker.Stop()
+						return nil
+					case <-ticker.C:
+						slog.Info("Collecting power consumption metrics for device", "uuid", uuid, "index", i)
+						m, err := producePowerConsumption(pds, uuid, i)
+						if err != nil {
+							return err
+						}
+						p.mu.Lock()
+						ms := p.metricSlice.AppendEmpty()
+						m.CopyTo(ms)
+						p.mu.Unlock()
+					}
+				}
+
+			}, func(err error) {
+				ticker.Stop()
+			})
 		}
 	}
 
-	return nil
+	return g.Run()
+
+	//for i, pds := range p.devices {
+	//	uuid, ret := pds.d.GetUUID()
+	//	if ret != nvml.SUCCESS {
+	//		slog.Error("Failed to get device uuid", "index", i, "error", nvml.ErrorString(ret))
+	//		continue
+	//	}
+	//	slog.Debug("Collecting metrics for device", "uuid", uuid, "index", i)
+	//
+	//	err := p.produceUtilization(pds, uuid, i, ms)
+	//	if err != nil {
+	//		slog.Error("Failed to get GPU utilization for device", "uuid", uuid, "index", i, "error", err)
+	//		continue
+	//	}
+	//
+	//	err = p.produceMemoryUtilization(pds, uuid, i, ms)
+	//	if err != nil {
+	//		slog.Error("Failed to get GPU memory utilization for device", "uuid", uuid, "index", i, "error", err)
+	//		continue
+	//	}
+	//
+	//	err = p.producePowerConsumption(pds, uuid, i, ms)
+	//	if err != nil {
+	//		slog.Error("Failed to get GPU memory utilization for device", "uuid", uuid, "index", i, "error", err)
+	//		continue
+	//	}
+	//}
 }
 
-func (p *NvidiaProducer) produceUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+func produceUtilization(pds perDeviceState, uuid string, index int) (pmetric.Metric, error) {
 	metricName := metricNameGPUUtilizationPercent
 
-	m := ms.AppendEmpty()
+	m := pmetric.NewMetric()
 	g := m.SetEmptyGauge()
 	m.SetName(metricName)
 
 	sampleType, samples, ret := pds.d.GetSamples(nvml.GPU_UTILIZATION_SAMPLES, pds.lastTimestamp[metricName])
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
+		return m, ret
 	}
 	getValue, err := valueGetter(sampleType)
 	if err != nil {
-		return err
+		return m, err
 	}
 
 	sort.Slice(samples, func(i, j int) bool {
@@ -126,22 +242,23 @@ func (p *NvidiaProducer) produceUtilization(pds perDeviceState, uuid string, ind
 		dp.SetIntValue(value)
 	}
 
-	return nil
+	return m, nil
 }
 
-func (p *NvidiaProducer) produceMemoryUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+func produceMemoryUtilization(uuid string, index int) (pmetric.Metric, error) {
 	metricName := metricNameGPUUtilizationMemoryPercent
-	m := ms.AppendEmpty()
+
+	m := pmetric.NewMetric()
 	g := m.SetEmptyGauge()
 	m.SetName(metricName)
 
 	sampleType, samples, ret := pds.d.GetSamples(nvml.MEMORY_UTILIZATION_SAMPLES, pds.lastTimestamp[metricName])
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
+		return m, ret
 	}
 	getValue, err := valueGetter(sampleType)
 	if err != nil {
-		return err
+		return m, err
 	}
 
 	sort.Slice(samples, func(i, j int) bool {
@@ -163,22 +280,23 @@ func (p *NvidiaProducer) produceMemoryUtilization(pds perDeviceState, uuid strin
 		dp.SetIntValue(value)
 	}
 
-	return nil
+	return m, nil
 }
 
-func (p *NvidiaProducer) producePowerConsumption(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+func producePowerConsumption(pds perDeviceState, uuid string, index int) (pmetric.Metric, error) {
 	metricName := metricNameGPUPowerWatt
-	m := ms.AppendEmpty()
+
+	m := pmetric.NewMetric()
 	g := m.SetEmptyGauge()
 	m.SetName(metricName)
 
 	sampleType, samples, ret := pds.d.GetSamples(nvml.TOTAL_POWER_SAMPLES, pds.lastTimestamp[metricName])
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
+		return m, ret
 	}
 	getValue, err := valueGetter(sampleType)
 	if err != nil {
-		return err
+		return m, err
 	}
 
 	sort.Slice(samples, func(i, j int) bool {
@@ -206,7 +324,7 @@ func (p *NvidiaProducer) producePowerConsumption(pds perDeviceState, uuid string
 		dp.SetIntValue(value)
 	}
 
-	return nil
+	return m, nil
 }
 
 func valueGetter(sampleType nvml.ValueType) (func([8]byte) any, error) {
