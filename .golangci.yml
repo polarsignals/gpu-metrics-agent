@@ -1,0 +1,39 @@
+run:
+  deadline: 15m
+
+linters:
+  enable:
+    - depguard
+    - godot
+    - gofumpt
+    - goimports
+    - revive
+    - unused
+    - whitespace
+
+issues:
+  exclude-rules:
+    - path: _test.go
+      linters:
+        - errcheck
+
+linters-settings:
+  depguard:
+    list-type: blacklist
+    include-go-root: true
+    rules:
+      main:
+        list-mode: lax
+        allow:
+          - $gostd
+    packages-with-error-message:
+      - sync/atomic: "Use go.uber.org/atomic instead of sync/atomic"
+      - github.com/stretchr/testify/assert: "Use github.com/stretchr/testify/require instead of github.com/stretchr/testify/assert"
+      - github.com/go-kit/kit/log: "Use github.com/go-kit/log instead of github.com/go-kit/kit/log"
+      - github.com/pkg/errors: "Use fmt.Errorf instead"
+  goimports:
+    local-prefixes: github.com/polarsignals/gpu-metrics-agent
+  gofumpt:
+    extra-rules: true
+  misspell:
+    locale: US

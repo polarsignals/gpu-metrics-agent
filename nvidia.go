@@ -5,11 +5,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sort"
+
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"log/slog"
-	"sort"
 )
 
 const (
@@ -25,24 +26,24 @@ type perDeviceState struct {
 	lastTimestamp map[string]uint64
 }
 
-type producer struct {
+type NvidiaProducer struct {
 	devices []perDeviceState
 }
 
-func NewNvidiaProducer() (*producer, error) {
+func NewNvidiaProducer() (*NvidiaProducer, error) {
 	ret := nvml.Init()
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("failed to initialize NVML library: %v", nvml.ErrorString(ret))
+		return nil, fmt.Errorf("failed to initialize NVML library: %s", nvml.ErrorString(ret))
 	}
 	count, ret := nvml.DeviceGetCount()
 	if ret != nvml.SUCCESS {
-		return nil, fmt.Errorf("failed to get count of Nvidia devices: %v", nvml.ErrorString(ret))
+		return nil, fmt.Errorf("failed to get count of Nvidia devices: %s", nvml.ErrorString(ret))
 	}
 	devices := make([]perDeviceState, count)
 	for i := 0; i < count; i++ {
 		device, ret := nvml.DeviceGetHandleByIndex(i)
 		if ret != nvml.SUCCESS {
-			return nil, fmt.Errorf("failed to get handle for Nvidia device %d: %v", i, nvml.ErrorString(ret))
+			return nil, fmt.Errorf("failed to get handle for Nvidia device %d: %s", i, nvml.ErrorString(ret))
 		}
 		devices[i] = perDeviceState{
 			d: device,
@@ -53,12 +54,12 @@ func NewNvidiaProducer() (*producer, error) {
 			},
 		}
 	}
-	return &producer{
+	return &NvidiaProducer{
 		devices: devices,
 	}, nil
 }
 
-func (p *producer) Produce(ms pmetric.MetricSlice) error {
+func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
 	for i, pds := range p.devices {
 		uuid, ret := pds.d.GetUUID()
 		if ret != nvml.SUCCESS {
@@ -89,7 +90,7 @@ func (p *producer) Produce(ms pmetric.MetricSlice) error {
 	return nil
 }
 
-func (p *producer) produceUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+func (p *NvidiaProducer) produceUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
 	metricName := metricNameGPUUtilizationPercent
 
 	m := ms.AppendEmpty()
@@ -128,9 +129,8 @@ func (p *producer) produceUtilization(pds perDeviceState, uuid string, index int
 	return nil
 }
 
-func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+func (p *NvidiaProducer) produceMemoryUtilization(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
 	metricName := metricNameGPUUtilizationMemoryPercent
-
 	m := ms.AppendEmpty()
 	g := m.SetEmptyGauge()
 	m.SetName(metricName)
@@ -166,9 +166,8 @@ func (p *producer) produceMemoryUtilization(pds perDeviceState, uuid string, ind
 	return nil
 }
 
-func (p *producer) producePowerConsumption(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+func (p *NvidiaProducer) producePowerConsumption(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
 	metricName := metricNameGPUPowerWatt
-
 	m := ms.AppendEmpty()
 	g := m.SetEmptyGauge()
 	m.SetName(metricName)

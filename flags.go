@@ -16,7 +16,7 @@ const (
 	ExitSuccess ExitCode = 0
 	ExitFailure ExitCode = 1
 
-	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set
+	// Go 'flag' package calls os.Exit(2) on flag parse errors, if ExitOnError is set.
 	ExitParseError ExitCode = 2
 )
 
@@ -42,7 +42,7 @@ type FlagsLogs struct {
 	Format string `default:"logfmt" enum:"logfmt,json"           help:"Configure if structured logging as JSON or as logfmt"`
 }
 
-// slogHandler returns a non-nil slog.Handler based on the log flags
+// slogHandler returns a non-nil slog.Handler based on the log flags.
 func (f FlagsLogs) slogHandler() slog.Handler {
 	level := slog.LevelInfo
 	switch f.Level {
