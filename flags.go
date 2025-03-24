@@ -25,11 +25,11 @@ func Failure(msg string, args ...interface{}) ExitCode {
 }
 
 type Flags struct {
-	Version           bool          `help:"Show application version."`
-	Log               FlagsLogs     `embed:""                         prefix:"log-"`
-	Node              string        `default:"${hostname}"               help:"The name of the node that the process is running on. If on Kubernetes, this must match the Kubernetes node name."`
-	ClockSyncInterval time.Duration `default:"3m" help:"How frequently to synchronize with the realtime clock."`
+	Version bool      `help:"Show application version."`
+	Log     FlagsLogs `embed:""                         prefix:"log-"`
+	Node    string    `default:"${hostname}"               help:"The name of the node that the process is running on. If on Kubernetes, this must match the Kubernetes node name."`
 
+	CollectionInterval time.Duration `default:"10s" help:"Interval between collection cycles."`
 	// which metrics producers (e.g. nvidia) to enable
 	MetricsProducer FlagsMetricProducer `embed:"" prefix:"metrics-producer-"`
 	RemoteStore     FlagsRemoteStore    `embed:"" prefix:"remote-store-"`

@@ -109,7 +109,7 @@ func mainWithExitCode() ExitCode {
 	defer grpcConn.Close()
 
 	arrowClient := arrowpb.NewArrowMetricsServiceClient(grpcConn)
-	arrowMetricsExporter := NewExporter(arrowClient, time.Second*10, map[string]any{"node": f.Node})
+	arrowMetricsExporter := NewExporter(arrowClient, f.CollectionInterval, map[string]any{"node": f.Node})
 	const nvidiaMetricsScopeName = "parca.nvidia_gpu_metrics"
 	if f.MetricsProducer.NvidiaGpu {
 		nvidia, err := NewNvidiaProducer()
