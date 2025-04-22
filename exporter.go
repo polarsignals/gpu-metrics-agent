@@ -107,13 +107,30 @@ func (e *Exporter) report(ctx context.Context) error {
 			e.stream = nil
 			continue
 		}
+		start := time.Now()
 		err = e.stream.endpoint.Send(arrow)
 		if err != nil {
 			slog.Warn("Error on send", "error", err)
 			e.stream = nil
 			continue
 		}
-		slog.Info("Send succeeded", "data points", dpc)
+		batchStatus, err := e.stream.endpoint.Recv()
+		if err != nil {
+			slog.Warn("Error on recv", "error", err)
+			return err
+		}
+		if batchStatus.GetStatusCode() != arrowpb.StatusCode_OK {
+			slog.Warn("unexpected status code",
+				"status", batchStatus.GetStatusCode(),
+				"message", batchStatus.GetStatusMessage(),
+			)
+			return err
+		}
+
+		slog.Info("Send succeeded",
+			"data points", dpc,
+			"duration", time.Since(start),
+		)
 		break
 	}
 
