@@ -237,8 +237,10 @@ func (p *NvidiaProducer) produceThroughput(pds perDeviceState, uuid string, inde
 		switch counter {
 		case nvml.PCIE_UTIL_TX_BYTES:
 			metricName = metricNameGPUPCIeThroughputTransmit
+			tp *= 1000 // KB/s to bytes/s
 		case nvml.PCIE_UTIL_RX_BYTES:
 			metricName = metricNameGPUPCIeThroughputReceive
+			tp *= 1000 // KB/s to bytes/s
 		case nvml.PCIE_UTIL_COUNT:
 			metricName = metricNameGPUPCIeThroughputCount
 		}
@@ -250,7 +252,7 @@ func (p *NvidiaProducer) produceThroughput(pds perDeviceState, uuid string, inde
 		dp.Attributes().PutStr(attributeUUID, uuid)
 		dp.Attributes().PutInt(attributeIndex, int64(index))
 		dp.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
-		dp.SetIntValue(int64(tp * 1000)) // KB/s to bytes/s
+		dp.SetIntValue(int64(tp))
 	}
 
 	return nil
