@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/NVIDIA/go-nvml/pkg/nvml"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -19,6 +20,9 @@ const (
 	metricNameGPUUtilizationMemoryPercent = "gpu_utilization_memory_percent"
 	metricNameGPUUtilizationPercent       = "gpu_utilization_percent"
 	metricNameGPUPowerWatt                = "gpu_power_watt"
+	metricNameGPUPCIeThroughputReceive    = "gpu_pcie_throughput_receive_bytes"
+	metricNameGPUPCIeThroughputTransmit   = "gpu_pcie_throughput_transmit_bytes"
+	metricNameGPUPCIeThroughputCount      = "gpu_pcie_throughput_count"
 )
 
 type perDeviceState struct {
@@ -84,6 +88,11 @@ func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
 		if err != nil {
 			slog.Error("Failed to get GPU memory utilization for device", "uuid", uuid, "index", i, "error", err)
 			continue
+		}
+
+		err = p.produceThroughput(pds, uuid, i, ms)
+		if err != nil {
+			slog.Error("Failed to get GPU PICe throughput for device", "uuid", uuid, "index", i, "error", err)
 		}
 	}
 
@@ -204,6 +213,46 @@ func (p *NvidiaProducer) producePowerConsumption(pds perDeviceState, uuid string
 		dp.Attributes().PutInt(attributeIndex, int64(index))
 		dp.SetTimestamp(pcommon.Timestamp(s.TimeStamp * 1000)) // micros to nanos
 		dp.SetIntValue(value)
+	}
+
+	return nil
+}
+
+var pcieCounters = []nvml.PcieUtilCounter{
+	nvml.PCIE_UTIL_TX_BYTES,
+	nvml.PCIE_UTIL_RX_BYTES,
+	nvml.PCIE_UTIL_COUNT,
+}
+
+func (p *NvidiaProducer) produceThroughput(pds perDeviceState, uuid string, index int, ms pmetric.MetricSlice) error {
+	for _, counter := range pcieCounters {
+		ts := time.Now()
+
+		tp, ret := pds.d.GetPcieThroughput(counter)
+		if !errors.Is(ret, nvml.SUCCESS) {
+			return fmt.Errorf("failed to get PCIe throughput for %d %d: %s", index, counter, nvml.ErrorString(ret))
+		}
+
+		var metricName string
+		switch counter {
+		case nvml.PCIE_UTIL_TX_BYTES:
+			metricName = metricNameGPUPCIeThroughputTransmit
+			tp *= 1000 // KB/s to bytes/s
+		case nvml.PCIE_UTIL_RX_BYTES:
+			metricName = metricNameGPUPCIeThroughputReceive
+			tp *= 1000 // KB/s to bytes/s
+		case nvml.PCIE_UTIL_COUNT:
+			metricName = metricNameGPUPCIeThroughputCount
+		}
+
+		m := ms.AppendEmpty()
+		m.SetName(metricName)
+		g := m.SetEmptyGauge()
+		dp := g.DataPoints().AppendEmpty()
+		dp.Attributes().PutStr(attributeUUID, uuid)
+		dp.Attributes().PutInt(attributeIndex, int64(index))
+		dp.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+		dp.SetIntValue(int64(tp))
 	}
 
 	return nil
