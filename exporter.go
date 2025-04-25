@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"github.com/oklog/run"
 	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	"github.com/open-telemetry/otel-arrow/pkg/otel/arrow_record"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -15,6 +16,7 @@ import (
 
 type Producer interface {
 	Produce(pmetric.MetricSlice) error
+	Collect(context.Context) error
 }
 
 type ProducerConfig struct {
@@ -139,6 +141,20 @@ func (e *Exporter) report(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (e *Exporter) Collect(ctx context.Context) error {
+	var group run.Group
+
+	for _, producer := range e.producers {
+		group.Add(func() error {
+			return producer.Producer.Collect(ctx)
+		}, func(err error) {
+			// TODO
+		})
+	}
+
+	return group.Run()
 }
 
 func (e *Exporter) Start(ctx context.Context) error {

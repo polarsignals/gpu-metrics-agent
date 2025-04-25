@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"hash/fnv"
 	"log/slog"
 	"maps"
@@ -28,6 +29,10 @@ var (
 
 type MockProducer struct {
 	deviceLastTime map[string]time.Time
+}
+
+func (p *MockProducer) Collect(ctx context.Context) error {
+	return nil
 }
 
 // NewNvidiaMockProducer creates a Producer that generates random data to send.

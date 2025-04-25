@@ -13,7 +13,6 @@ import (
 	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
-
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
@@ -135,6 +134,11 @@ func mainWithExitCode() ExitCode {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	var g run.Group
+	g.Add(func() error {
+		return arrowMetricsExporter.Collect(ctx)
+	}, func(error) {
+		cancel()
+	})
 	g.Add(func() error {
 		return arrowMetricsExporter.Start(ctx)
 	}, func(error) {
