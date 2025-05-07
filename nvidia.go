@@ -18,14 +18,18 @@ import (
 )
 
 const (
+	attributeClock                        = "clock"
 	attributeIndex                        = "index"
 	attributeUUID                         = "uuid"
-	metricNameGPUUtilizationMemoryPercent = "gpu_utilization_memory_percent"
-	metricNameGPUUtilizationPercent       = "gpu_utilization_percent"
-	metricNameGPUPowerWatt                = "gpu_power_watt"
+	metricNameGPUClockHertz               = "gpu_clock_hertz"
+	metricNameGPUPCIeThroughputCount      = "gpu_pcie_throughput_count"
 	metricNameGPUPCIeThroughputReceive    = "gpu_pcie_throughput_receive_bytes"
 	metricNameGPUPCIeThroughputTransmit   = "gpu_pcie_throughput_transmit_bytes"
-	metricNameGPUPCIeThroughputCount      = "gpu_pcie_throughput_count"
+	metricNameGPUPowerLimitWatt           = "gpu_power_limit_watt"
+	metricNameGPUPowerWatt                = "gpu_power_watt"
+	metricNameGPUTemperatureCelsius       = "gpu_temperature_celsius"
+	metricNameGPUUtilizationMemoryPercent = "gpu_utilization_memory_percent"
+	metricNameGPUUtilizationPercent       = "gpu_utilization_percent"
 )
 
 // This file implements NVIDIA GPU metrics collection and production:
@@ -65,17 +69,23 @@ func NewNvidiaProducer() (*NvidiaProducer, error) {
 		if !errors.Is(ret, nvml.SUCCESS) {
 			return nil, fmt.Errorf("failed to get UUID for Nvidia device %d: %s", i, nvml.ErrorString(ret))
 		}
+		powerLimit, ret := nvml.DeviceGetPowerManagementLimit(device)
+		if !errors.Is(ret, nvml.SUCCESS) {
+			return nil, fmt.Errorf("failed to get power limit for Nvidia device %d: %s", i, nvml.ErrorString(ret))
+		}
 
 		devices[i] = &perDeviceState{
-			d:     device,
-			uuid:  uuid,
-			index: i,
+			d:          device,
+			uuid:       uuid,
+			index:      i,
+			powerLimit: powerLimit,
 
 			mu: &sync.RWMutex{},
 			lastTimestamp: map[string]uint64{
 				metricNameGPUPowerWatt:                0,
 				metricNameGPUUtilizationMemoryPercent: 0,
 				metricNameGPUUtilizationPercent:       0,
+				metricNameGPUPowerLimitWatt:           0,
 			},
 			gauges: map[string]pmetric.Gauge{},
 		}
@@ -95,7 +105,12 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 			for {
 				select {
 				case <-ctx.Done():
-					return nil
+					ticker.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					} else {
+						continue
+					}
 				case <-ticker.C:
 					for _, pds := range p.devices {
 						// We could consider making these concurrent,
@@ -111,7 +126,30 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
-			ticker.Stop()
+		})
+	}
+	{
+		ticker := time.NewTicker(1 * time.Second)
+
+		group.Add(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					ticker.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					} else {
+						continue
+					}
+				case <-ticker.C:
+					for _, pds := range p.devices {
+						if err := pds.collectClock(); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}, func(err error) {
 		})
 	}
 	{
@@ -121,6 +159,10 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 			for {
 				select {
 				case <-ctx.Done():
+					ticker.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					return nil
 				case <-ticker.C:
 					for _, pds := range p.devices {
@@ -132,7 +174,6 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
-			ticker.Stop()
 		})
 	}
 	{
@@ -142,6 +183,10 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 			for {
 				select {
 				case <-ctx.Done():
+					ticker.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					return nil
 				case <-ticker.C:
 					for _, pds := range p.devices {
@@ -153,11 +198,35 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
-			ticker.Stop()
+		})
+	}
+	{
+		ticker := time.NewTicker(time.Second)
+
+		group.Add(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					ticker.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					return nil
+				case <-ticker.C:
+					for _, pds := range p.devices {
+						err := pds.collectTemperature()
+						if err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}, func(err error) {
 		})
 	}
 
-	return group.Run()
+	err := group.Run()
+	return err
 }
 
 func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
@@ -185,6 +254,23 @@ func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
 			}
 
 			device.mu.Unlock()
+
+			// Append static metrics that were read at the beginning and never change.
+
+			// Append power limit metric
+			m := ms.AppendEmpty()
+			m.SetName(metricNameGPUPowerLimitWatt)
+			m.SetEmptyGauge()
+			dp := m.Gauge().DataPoints().AppendEmpty()
+			dp.Attributes().PutStr(attributeUUID, device.uuid)
+			dp.Attributes().PutInt(attributeIndex, int64(device.index))
+			dp.SetTimestamp(pcommon.Timestamp(time.Now().UnixNano()))
+			dp.SetIntValue(int64((device.powerLimit) / 1000)) // Convert from milliwatts to watts
+
+			slog.Debug("producing metric",
+				"metric", metricNameGPUPowerLimitWatt,
+				"data points", m.Gauge().DataPoints().Len(),
+			)
 		}
 	}
 
@@ -192,9 +278,10 @@ func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
 }
 
 type perDeviceState struct {
-	d     nvml.Device
-	uuid  string
-	index int
+	d          nvml.Device
+	uuid       string
+	index      int
+	powerLimit uint32
 
 	mu            *sync.RWMutex
 	lastTimestamp map[string]uint64
@@ -303,6 +390,37 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 	return nil
 }
 
+func (ds *perDeviceState) collectClock() error {
+	clockTypes := map[string]nvml.ClockType{
+		"graphics": nvml.CLOCK_GRAPHICS,
+		"sm":       nvml.CLOCK_SM,
+		"mem":      nvml.CLOCK_MEM,
+		"video":    nvml.CLOCK_VIDEO,
+	}
+
+	g := pmetric.NewGauge()
+
+	for clockName, clockType := range clockTypes {
+		ts := time.Now()
+		clock, ret := nvml.DeviceGetClockInfo(ds.d, clockType)
+		if !errors.Is(ret, nvml.SUCCESS) {
+			return fmt.Errorf("failed to get clock for %d %s: %s", ds.index, clockName, nvml.ErrorString(ret))
+		}
+		clock *= 1e6 // MHz to Hertz
+
+		dp := g.DataPoints().AppendEmpty()
+		dp.Attributes().PutStr(attributeUUID, ds.uuid)
+		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
+		dp.Attributes().PutStr(attributeClock, clockName)
+		dp.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+		dp.SetIntValue(int64(clock))
+	}
+
+	ds.appendGauge(metricNameGPUClockHertz, uint64(time.Now().UnixNano()), g)
+
+	return nil
+}
+
 func (ds *perDeviceState) collectPowerConsumption() error {
 	metricName := metricNameGPUPowerWatt
 	g := pmetric.NewGauge()
@@ -348,6 +466,27 @@ func (ds *perDeviceState) collectPowerConsumption() error {
 	return nil
 }
 
+func (ds *perDeviceState) collectTemperature() error {
+	metricName := metricNameGPUTemperatureCelsius
+
+	ts := time.Now()
+	temp, ret := ds.d.GetTemperature(nvml.TEMPERATURE_GPU)
+	if !errors.Is(ret, nvml.SUCCESS) {
+		return fmt.Errorf("failed to get temperaturefor %d: %s", ds.index, nvml.ErrorString(ret))
+	}
+
+	g := pmetric.NewGauge()
+	dp := g.DataPoints().AppendEmpty()
+	dp.Attributes().PutStr(attributeUUID, ds.uuid)
+	dp.Attributes().PutInt(attributeIndex, int64(ds.index))
+	dp.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+	dp.SetIntValue(int64(temp))
+
+	ds.appendGauge(metricName, uint64(ts.UnixNano()), g)
+
+	return nil
+}
+
 var pcieCounters = []nvml.PcieUtilCounter{
 	nvml.PCIE_UTIL_TX_BYTES,
 	nvml.PCIE_UTIL_RX_BYTES,
@@ -362,7 +501,6 @@ func (ds *perDeviceState) collectPCIThroughput() error {
 		if !errors.Is(ret, nvml.SUCCESS) {
 			return fmt.Errorf("failed to get PCIe throughput for %d %d: %s", ds.index, counter, nvml.ErrorString(ret))
 		}
-		slog.Error("throughput collecting", "duration", time.Since(ts))
 
 		var metricName string
 		switch counter {
