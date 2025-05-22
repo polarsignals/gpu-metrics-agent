@@ -21,6 +21,8 @@ const (
 	attributeClock                        = "clock"
 	attributeIndex                        = "index"
 	attributeUUID                         = "uuid"
+	attributePID                          = "pid"
+	attributeComm                         = "comm"
 	metricNameGPUClockHertz               = "gpu_clock_hertz"
 	metricNameGPUPCIeThroughputCount      = "gpu_pcie_throughput_count"
 	metricNameGPUPCIeThroughputReceive    = "gpu_pcie_throughput_receive_bytes"
@@ -120,6 +122,30 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 							return err
 						}
 						if err := pds.collectMemoryUtilization(); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}, func(err error) {
+		})
+	}
+	{
+		ticker := time.NewTicker(1 * time.Second)
+
+		group.Add(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					ticker.Stop()
+					if err := ctx.Err(); err != nil {
+						return err
+					} else {
+						continue
+					}
+				case <-ticker.C:
+					for _, pds := range p.devices {
+						if err := pds.collectProcessUtilization(); err != nil {
 							return err
 						}
 					}
@@ -311,6 +337,22 @@ func (ds *perDeviceState) appendGauge(metricName string, maxTimestamp uint64, g 
 	}
 }
 
+func (ds *perDeviceState) appendGaugeWithoutTime(metricName string, g pmetric.Gauge) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	slog.Debug("appending data points without max timestamp",
+		"data points", g.DataPoints().Len(),
+		"metric", metricName,
+	)
+
+	if _, found := ds.gauges[metricName]; found {
+		g.DataPoints().MoveAndAppendTo(ds.gauges[metricName].DataPoints())
+	} else {
+		ds.gauges[metricName] = g
+	}
+}
+
 func (ds *perDeviceState) collectUtilization() error {
 	metricName := metricNameGPUUtilizationPercent
 	g := pmetric.NewGauge()
@@ -331,13 +373,16 @@ func (ds *perDeviceState) collectUtilization() error {
 	})
 
 	for _, s := range samples {
+		value := getValue(s.SampleValue).(int64)
+
 		if s.TimeStamp == 0 {
+			continue
+		}
+		if value < 0 || value > 100 { // ignore if below 0% or above 100%
 			continue
 		}
 
 		maxTimestamp = max(maxTimestamp, s.TimeStamp)
-
-		value := getValue(s.SampleValue).(int64)
 
 		dp := g.DataPoints().AppendEmpty()
 		dp.Attributes().PutStr(attributeUUID, ds.uuid)
@@ -371,13 +416,16 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 	})
 
 	for _, s := range samples {
+		value := getValue(s.SampleValue).(int64)
+
 		if s.TimeStamp == 0 {
+			continue
+		}
+		if value < 0 || value > 100 { // ignore if below 0% or above 100%
 			continue
 		}
 
 		maxTimestamp = max(maxTimestamp, s.TimeStamp)
-
-		value := getValue(s.SampleValue).(int64)
 		dp := g.DataPoints().AppendEmpty()
 		dp.Attributes().PutStr(attributeUUID, ds.uuid)
 		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
@@ -386,6 +434,65 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 	}
 
 	ds.appendGauge(metricName, maxTimestamp, g)
+
+	return nil
+}
+
+func (ds *perDeviceState) collectProcessUtilization() error {
+	util := pmetric.NewGauge()
+	utilMem := pmetric.NewGauge()
+
+	ts := time.Now()
+	// Collect compute processes
+	computeProcesses, ret := ds.d.GetComputeRunningProcesses()
+	if !errors.Is(ret, nvml.SUCCESS) {
+		return fmt.Errorf("failed to get compute running processes for %d: %s", ds.index, nvml.ErrorString(ret))
+	}
+
+	// Return early if no processes are running
+	if len(computeProcesses) == 0 {
+		slog.Debug("no compute processes running")
+		return nil
+	}
+
+	slog.Debug("compute processes running", "count", len(computeProcesses))
+
+	// Add data points for each process
+	for _, process := range computeProcesses {
+		utilization, ret := ds.d.GetProcessUtilization(uint64(process.Pid))
+		if !errors.Is(ret, nvml.SUCCESS) {
+			return fmt.Errorf("failed to get process utilization for %d - pid: %d - %s", ds.index, process.Pid, nvml.ErrorString(ret))
+		}
+
+		processName, ret := nvml.SystemGetProcessName(int(process.Pid)) // could easily be cached
+		if !errors.Is(ret, nvml.SUCCESS) {
+			return fmt.Errorf("failed to get process name for %d - pid: %d - %s", ds.index, process.Pid, nvml.ErrorString(ret))
+		}
+
+		for _, sample := range utilization {
+			// Add utilization data point
+			dpUtil := util.DataPoints().AppendEmpty()
+			dpUtil.Attributes().PutStr(attributeUUID, ds.uuid)
+			dpUtil.Attributes().PutInt(attributeIndex, int64(ds.index))
+			dpUtil.Attributes().PutInt(attributePID, int64(process.Pid))
+			dpUtil.Attributes().PutStr(attributeComm, processName)
+			dpUtil.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+			dpUtil.SetIntValue(int64(sample.SmUtil))
+
+			// Add memory utilization data point
+			dpMem := utilMem.DataPoints().AppendEmpty()
+			dpMem.Attributes().PutStr(attributeUUID, ds.uuid)
+			dpMem.Attributes().PutInt(attributeIndex, int64(ds.index))
+			dpMem.Attributes().PutInt(attributePID, int64(process.Pid))
+			dpMem.Attributes().PutStr(attributeComm, processName)
+			dpMem.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+			dpMem.SetIntValue(int64(sample.MemUtil))
+		}
+	}
+
+	// Append gauges
+	ds.appendGaugeWithoutTime(metricNameGPUUtilizationPercent, util)
+	ds.appendGaugeWithoutTime(metricNameGPUUtilizationMemoryPercent, utilMem)
 
 	return nil
 }
