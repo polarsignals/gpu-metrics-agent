@@ -473,11 +473,21 @@ func (ds *perDeviceState) collectProcessUtilization() error {
 	for _, process := range computeProcesses {
 		utilization, ret := ds.d.GetProcessUtilization(uint64(process.Pid))
 		if !errors.Is(ret, nvml.SUCCESS) {
+			// If the process is not found (likely terminated), skip it and continue
+			if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+				slog.Debug("process not found, skipping", "pid", process.Pid, "error", nvml.ErrorString(ret))
+				continue
+			}
 			return fmt.Errorf("failed to get process utilization for %d - pid: %d - %s", ds.index, process.Pid, nvml.ErrorString(ret))
 		}
 
 		processName, ret := nvml.SystemGetProcessName(int(process.Pid)) // could easily be cached
 		if !errors.Is(ret, nvml.SUCCESS) {
+			// If the process is not found (likely terminated), skip it and continue
+			if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+				slog.Debug("process not found, skipping", "pid", process.Pid, "error", nvml.ErrorString(ret))
+				continue
+			}
 			return fmt.Errorf("failed to get process name for %d - pid: %d - %s", ds.index, process.Pid, nvml.ErrorString(ret))
 		}
 
