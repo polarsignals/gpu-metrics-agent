@@ -98,6 +98,8 @@ func NewNvidiaProducer() (*NvidiaProducer, error) {
 }
 
 func (p *NvidiaProducer) Collect(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+
 	var group run.Group
 
 	{
@@ -128,6 +130,7 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
+			cancel()
 		})
 	}
 	{
@@ -149,9 +152,11 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 							return err
 						}
 					}
+
 				}
 			}
 		}, func(err error) {
+			cancel()
 		})
 	}
 	{
@@ -176,6 +181,7 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
+			cancel()
 		})
 	}
 	{
@@ -200,6 +206,7 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
+			cancel()
 		})
 	}
 	{
@@ -224,6 +231,7 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
+			cancel()
 		})
 	}
 	{
@@ -248,11 +256,11 @@ func (p *NvidiaProducer) Collect(ctx context.Context) error {
 				}
 			}
 		}, func(err error) {
+			cancel()
 		})
 	}
 
-	err := group.Run()
-	return err
+	return group.Run()
 }
 
 func (p *NvidiaProducer) Produce(ms pmetric.MetricSlice) error {
@@ -455,7 +463,11 @@ func (ds *perDeviceState) collectProcessUtilization() error {
 		return nil
 	}
 
-	slog.Debug("compute processes running", "count", len(computeProcesses))
+	pids := make([]uint32, len(computeProcesses))
+	for i, p := range computeProcesses {
+		pids[i] = p.Pid
+	}
+	slog.Debug("compute processes running", "pids", pids)
 
 	// Add data points for each process
 	for _, process := range computeProcesses {
