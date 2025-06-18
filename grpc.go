@@ -16,7 +16,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 	tracing "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
-	"go.opentelemetry.io/ebpf-profiler/libpf"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
@@ -30,7 +29,7 @@ import (
 // WaitGrpcEndpoint waits until the gRPC connection is established.
 func (f FlagsRemoteStore) WaitGrpcEndpoint(ctx context.Context, reg prometheus.Registerer, tp trace.TracerProvider) (*grpc.ClientConn, error) {
 	// Sleep with a fixed backoff time added of +/- 20% jitter
-	tick := time.NewTicker(libpf.AddJitter(f.GRPCStartupBackoffTime, 0.2))
+	tick := time.NewTicker(addJitter(f.GRPCStartupBackoffTime, 0.2))
 	defer tick.Stop()
 
 	// metrics
