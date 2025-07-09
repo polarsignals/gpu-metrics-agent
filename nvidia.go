@@ -457,20 +457,27 @@ func (ds *perDeviceState) collectProcessUtilization() error {
 		return fmt.Errorf("failed to get compute running processes for %d: %s", ds.index, nvml.ErrorString(ret))
 	}
 
+	graphicsProccesses, ret := ds.d.GetGraphicsRunningProcesses()
+	if !errors.Is(ret, nvml.SUCCESS) {
+		return fmt.Errorf("failed to get graphics running processes for %d: %s", ds.index, nvml.ErrorString(ret))
+	}
+
 	// Return early if no processes are running
-	if len(computeProcesses) == 0 {
-		slog.Debug("no compute processes running")
+	if len(computeProcesses) == 0 && len(graphicsProccesses) == 0 {
+		slog.Debug("no processes running")
 		return nil
 	}
 
-	pids := make([]uint32, len(computeProcesses))
-	for i, p := range computeProcesses {
+	processes := append(computeProcesses, graphicsProccesses...)
+
+	pids := make([]uint32, len(processes))
+	for i, p := range processes {
 		pids[i] = p.Pid
 	}
-	slog.Debug("compute processes running", "pids", pids)
+	slog.Debug("processes running", "pids", pids)
 
 	// Add data points for each process
-	for _, process := range computeProcesses {
+	for _, process := range processes {
 		utilization, ret := ds.d.GetProcessUtilization(uint64(process.Pid))
 		if !errors.Is(ret, nvml.SUCCESS) {
 			// If the process is not found (likely terminated), skip it and continue
