@@ -18,6 +18,27 @@ builds:
     tags:
       - osusergo
       - netgo
+  - id: linux-arm64
+    main: ./
+    binary: gpu-metrics-agent
+    goos:
+      - linux
+    goarch:
+      - arm64
+    env:
+      - CGO_ENABLED=1
+      - CC=aarch64-linux-gnu-gcc
+    flags:
+      - -mod=readonly
+      - -trimpath
+      - -v
+    ldflags:
+      # https://goreleaser.com/customization/build/#reproducible-builds
+      # {{.CommitDate}} is the date of the commit to make builds reproducible.
+      - -X main.version={{.Version}} -X main.commit={{.FullCommit}} -X main.date={{.CommitDate}} -X main.goArch=arm64
+    tags:
+      - osusergo
+      - netgo
 archives:
   - name_template: >-
       {{ .ProjectName }}_
@@ -64,10 +85,26 @@ dockers:
   - --label=org.opencontainers.image.version={{ .Tag }}
   - --label=org.opencontainers.image.revision={{ .FullCommit }}
   - --label=org.opencontainers.image.licenses=Apache-2.0
+- image_templates: ["ghcr.io/polarsignals/{{ .ProjectName }}:{{ .Tag }}-arm64"]
+  dockerfile: Dockerfile
+  use: buildx
+  goarch: arm64
+  build_flag_templates:
+  - --pull
+  - --platform=linux/arm64
+  - --label=org.opencontainers.image.title={{ .ProjectName }}
+  - --label=org.opencontainers.image.description={{ .ProjectName }}
+  - --label=org.opencontainers.image.url=https://polarsignals.com
+  - --label=org.opencontainers.image.source=https://github.com/polarsignals/{{ .ProjectName }}
+  - --label=org.opencontainers.image.version={{ .Tag }}
+  - --label=org.opencontainers.image.revision={{ .FullCommit }}
+  - --label=org.opencontainers.image.licenses=Apache-2.0
 docker_manifests:
 - name_template: ghcr.io/polarsignals/{{ .ProjectName }}:{{ .Tag }}
   image_templates:
   - ghcr.io/polarsignals/{{ .ProjectName }}:{{ .Tag }}-amd64
+  - ghcr.io/polarsignals/{{ .ProjectName }}:{{ .Tag }}-arm64
 - name_template: ghcr.io/polarsignals/{{ .ProjectName }}:latest
   image_templates:
   - ghcr.io/polarsignals/{{ .ProjectName }}:{{ .Tag }}-amd64
+  - ghcr.io/polarsignals/{{ .ProjectName }}:{{ .Tag }}-arm64
