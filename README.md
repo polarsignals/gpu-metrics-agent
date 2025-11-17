@@ -115,7 +115,7 @@ The agent consists of three main components:
 ## Building from Source
 
 ```bash
-go build ./cmd/gpu-metrics-agent
+go build .
 ```
 
 ## License
