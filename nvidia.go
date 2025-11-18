@@ -73,7 +73,12 @@ func NewNvidiaProducer() (*NvidiaProducer, error) {
 		}
 		powerLimit, ret := nvml.DeviceGetPowerManagementLimit(device)
 		if !errors.Is(ret, nvml.SUCCESS) {
-			return nil, fmt.Errorf("failed to get power limit for Nvidia device %d: %s", i, nvml.ErrorString(ret))
+			// Not supported on DGX
+			if errors.Is(ret, nvml.ERROR_NOT_SUPPORTED) {
+				slog.Warn("power limit not supported", "device", i, "err", nvml.ErrorString(ret))
+			} else {
+				return nil, fmt.Errorf("failed to get power limit for Nvidia device %d: %s", i, nvml.ErrorString(ret))
+			}
 		}
 
 		devices[i] = &perDeviceState{
@@ -369,7 +374,11 @@ func (ds *perDeviceState) collectUtilization() error {
 
 	sampleType, samples, ret := ds.d.GetSamples(nvml.GPU_UTILIZATION_SAMPLES, maxTimestamp)
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
+		if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+			slog.Warn("get GPU_UTILIZATION_SAMPLES returned not found", "err", ret)
+			return nil
+		}
+		return fmt.Errorf("failed to get GPU_UTILIZATION_SAMPLES: %w", ret)
 	}
 	getValue, err := valueGetter(sampleType)
 	if err != nil {
@@ -412,7 +421,11 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 
 	sampleType, samples, ret := ds.d.GetSamples(nvml.MEMORY_UTILIZATION_SAMPLES, maxTimestamp)
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
+		if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+			slog.Warn("get MEMORY_UTILIZATION_SAMPLES not found", "err", ret)
+			return nil
+		}
+		return fmt.Errorf("get MEMORY_UTILIZATION_SAMPLES failed %w", ret)
 	}
 	getValue, err := valueGetter(sampleType)
 	if err != nil {
@@ -481,7 +494,7 @@ func (ds *perDeviceState) collectProcessUtilization() error {
 		utilization, ret := ds.d.GetProcessUtilization(uint64(process.Pid))
 		if !errors.Is(ret, nvml.SUCCESS) {
 			// If the process is not found (likely terminated), skip it and continue
-			if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+			if errors.Is(ret, nvml.ERROR_NOT_FOUND) || errors.Is(ret, nvml.ERROR_NO_DATA) {
 				slog.Debug("process not found, skipping", "pid", process.Pid, "error", nvml.ErrorString(ret))
 				continue
 			}
@@ -491,7 +504,7 @@ func (ds *perDeviceState) collectProcessUtilization() error {
 		processName, ret := nvml.SystemGetProcessName(int(process.Pid)) // could easily be cached
 		if !errors.Is(ret, nvml.SUCCESS) {
 			// If the process is not found (likely terminated), skip it and continue
-			if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+			if errors.Is(ret, nvml.ERROR_NOT_FOUND) || errors.Is(ret, nvml.ERROR_NO_DATA) {
 				slog.Debug("process not found, skipping", "pid", process.Pid, "error", nvml.ErrorString(ret))
 				continue
 			}
@@ -540,7 +553,12 @@ func (ds *perDeviceState) collectClock() error {
 		ts := time.Now()
 		clock, ret := nvml.DeviceGetClockInfo(ds.d, clockType)
 		if !errors.Is(ret, nvml.SUCCESS) {
-			return fmt.Errorf("failed to get clock for %d %s: %s", ds.index, clockName, nvml.ErrorString(ret))
+			// Allow NOT_SUPPORTED for DGX
+			if errors.Is(ret, nvml.ERROR_NOT_SUPPORTED) {
+				slog.Warn("clock not found", "device", ds.index, "clock", clockName, "err", ret)
+			} else {
+				return fmt.Errorf("failed to get clock for %d %s: %s", ds.index, clockName, nvml.ErrorString(ret))
+			}
 		}
 		clock *= 1e6 // MHz to Hertz
 
@@ -565,7 +583,11 @@ func (ds *perDeviceState) collectPowerConsumption() error {
 
 	sampleType, samples, ret := ds.d.GetSamples(nvml.TOTAL_POWER_SAMPLES, maxTimestamp)
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return ret
+		if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
+			slog.Warn("get TOTAL_POWER_SAMPLES returned not found", "err", ret)
+			return nil
+		}
+		return fmt.Errorf("GetSamples failed %v", ret)
 	}
 	getValue, err := valueGetter(sampleType)
 	if err != nil {
@@ -608,7 +630,7 @@ func (ds *perDeviceState) collectTemperature() error {
 	ts := time.Now()
 	temp, ret := ds.d.GetTemperature(nvml.TEMPERATURE_GPU)
 	if !errors.Is(ret, nvml.SUCCESS) {
-		return fmt.Errorf("failed to get temperaturefor %d: %s", ds.index, nvml.ErrorString(ret))
+		return fmt.Errorf("failed to get temperature for %d: %s", ds.index, nvml.ErrorString(ret))
 	}
 
 	g := pmetric.NewGauge()
@@ -635,7 +657,11 @@ func (ds *perDeviceState) collectPCIThroughput() error {
 
 		tp, ret := ds.d.GetPcieThroughput(counter)
 		if !errors.Is(ret, nvml.SUCCESS) {
-			return fmt.Errorf("failed to get PCIe throughput for %d %d: %s", ds.index, counter, nvml.ErrorString(ret))
+			if errors.Is(ret, nvml.ERROR_NOT_SUPPORTED) {
+				slog.Warn("failed to get PCIe throughput", "device", ds.index, "counter", counter, "err", ret)
+			} else {
+				return fmt.Errorf("failed to get PCIe throughput for %d %d: %s", ds.index, counter, nvml.ErrorString(ret))
+			}
 		}
 
 		var metricName string
