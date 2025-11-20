@@ -659,6 +659,7 @@ func (ds *perDeviceState) collectPCIThroughput() error {
 		if !errors.Is(ret, nvml.SUCCESS) {
 			if errors.Is(ret, nvml.ERROR_NOT_SUPPORTED) {
 				slog.Warn("failed to get PCIe throughput", "device", ds.index, "counter", counter, "err", ret)
+				return nil
 			} else {
 				return fmt.Errorf("failed to get PCIe throughput for %d %d: %s", ds.index, counter, nvml.ErrorString(ret))
 			}
