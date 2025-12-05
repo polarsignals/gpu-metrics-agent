@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 	_ "google.golang.org/grpc/encoding/proto"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -125,40 +126,49 @@ func (f FlagsRemoteStore) setupGrpcConnection(parent context.Context, metrics *g
 	}
 	propagators := propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
 
+	unaryInterceptors := []grpc.UnaryClientInterceptor{
+		timeout.UnaryClientInterceptor(f.RPCUnaryTimeout), // 5m by default.
+		retry.UnaryClientInterceptor(
+			// Back-off with Jitter: scalar: 1s, jitterFraction: 0,1, 10 runs
+			// i: 1		t:969.91774ms		total:969.91774ms
+			// i: 2		t:1.914221005s		total:2.884138745s
+			// i: 3		t:3.788704363s		total:6.672843108s
+			// i: 4		t:8.285062088s		total:14.957905196s
+			// i: 5		t:14.480256611s		total:29.438161807s
+			// i: 6		t:32.586249789s		total:1m2.024411596s
+			// i: 7		t:1m6.755804584s	total:2m8.78021618s
+			// i: 8		t:2m3.116345957s	total:4m11.896562137s
+			// i: 9		t:4m3.895083732s	total:8m15.791645869s
+			// i: 10	t:9m19.350609671s	total:17m35.14225554s
+			retry.WithBackoff(retry.BackoffExponentialWithJitter(time.Second, 0.1)),
+			retry.WithMax(10),
+			// The passed in context has a `5m` timeout (see above), the whole invocation should finish within that time.
+			// However, by default all retried calls will use the parent context for their deadlines.
+			// This means, that unless you shorten the deadline of each call of the retry, you won't be able to retry the first call at all.
+			// `WithPerRetryTimeout` allows you to shorten the deadline of each retry call, allowing you to fit multiple retries in the single parent deadline.
+			retry.WithPerRetryTimeout(2*time.Minute),
+		),
+		metrics.UnaryClientInterceptor(
+			grpc_prometheus.WithExemplarFromContext(exemplarFromContext),
+		),
+		logging.UnaryClientInterceptor(interceptorLogger(), logging.WithFieldsFromContext(logTraceID)),
+	}
+
+	streamInterceptors := []grpc.StreamClientInterceptor{
+		metrics.StreamClientInterceptor(
+			grpc_prometheus.WithExemplarFromContext(exemplarFromContext),
+		),
+		logging.StreamClientInterceptor(interceptorLogger(), logging.WithFieldsFromContext(logTraceID)),
+	}
+
+	if len(f.GRPCHeaders) > 0 {
+		unaryInterceptors = append(unaryInterceptors, customHeadersUnaryInterceptor(f.GRPCHeaders))
+		streamInterceptors = append(streamInterceptors, customHeadersStreamInterceptor(f.GRPCHeaders))
+	}
+
 	opts = append(opts,
-		grpc.WithChainUnaryInterceptor(
-			timeout.UnaryClientInterceptor(f.RPCUnaryTimeout), // 5m by default.
-			retry.UnaryClientInterceptor(
-				// Back-off with Jitter: scalar: 1s, jitterFraction: 0,1, 10 runs
-				// i: 1		t:969.91774ms		total:969.91774ms
-				// i: 2		t:1.914221005s		total:2.884138745s
-				// i: 3		t:3.788704363s		total:6.672843108s
-				// i: 4		t:8.285062088s		total:14.957905196s
-				// i: 5		t:14.480256611s		total:29.438161807s
-				// i: 6		t:32.586249789s		total:1m2.024411596s
-				// i: 7		t:1m6.755804584s	total:2m8.78021618s
-				// i: 8		t:2m3.116345957s	total:4m11.896562137s
-				// i: 9		t:4m3.895083732s	total:8m15.791645869s
-				// i: 10	t:9m19.350609671s	total:17m35.14225554s
-				retry.WithBackoff(retry.BackoffExponentialWithJitter(time.Second, 0.1)),
-				retry.WithMax(10),
-				// The passed in context has a `5m` timeout (see above), the whole invocation should finish within that time.
-				// However, by default all retried calls will use the parent context for their deadlines.
-				// This means, that unless you shorten the deadline of each call of the retry, you won't be able to retry the first call at all.
-				// `WithPerRetryTimeout` allows you to shorten the deadline of each retry call, allowing you to fit multiple retries in the single parent deadline.
-				retry.WithPerRetryTimeout(2*time.Minute),
-			),
-			metrics.UnaryClientInterceptor(
-				grpc_prometheus.WithExemplarFromContext(exemplarFromContext),
-			),
-			logging.UnaryClientInterceptor(interceptorLogger(), logging.WithFieldsFromContext(logTraceID)),
-		),
-		grpc.WithChainStreamInterceptor(
-			metrics.StreamClientInterceptor(
-				grpc_prometheus.WithExemplarFromContext(exemplarFromContext),
-			),
-			logging.StreamClientInterceptor(interceptorLogger(), logging.WithFieldsFromContext(logTraceID)),
-		),
+		grpc.WithChainUnaryInterceptor(unaryInterceptors...),
+		grpc.WithChainStreamInterceptor(streamInterceptors...),
 		grpc.WithStatsHandler(tracing.NewClientHandler(
 			tracing.WithTracerProvider(tp),
 			tracing.WithPropagators(propagators),
@@ -250,4 +260,22 @@ func (vtprotoCodec) Unmarshal(data []byte, v any) error {
 
 func (vtprotoCodec) Name() string {
 	return Name
+}
+
+func customHeadersUnaryInterceptor(headers map[string]string) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		for key, value := range headers {
+			ctx = metadata.AppendToOutgoingContext(ctx, key, value)
+		}
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+}
+
+func customHeadersStreamInterceptor(headers map[string]string) grpc.StreamClientInterceptor {
+	return func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		for key, value := range headers {
+			ctx = metadata.AppendToOutgoingContext(ctx, key, value)
+		}
+		return streamer(ctx, desc, cc, method, opts...)
+	}
 }
