@@ -50,6 +50,13 @@ Track GPU performance during model training and inference. Ensure optimal resour
 | `gpu_temperature_celsius` | GPU temperature | 1s |
 | `gpu_pcie_throughput_transmit_bytes` | PCIe transmit throughput | 100ms |
 | `gpu_pcie_throughput_receive_bytes` | PCIe receive throughput | 100ms |
+| `gpu_prof_dram_active` | Fraction of time the GPU memory interface is active (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
+| `gpu_prof_sm_active` | Fraction of time ≥1 warp is active on an SM (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
+| `gpu_prof_sm_occupancy` | Fraction of SM warp slots occupied (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
+| `gpu_prof_pipe_tensor_active` | Tensor-core pipe issue fraction (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
+| `gpu_prof_pipe_fp64_active` | FP64 pipe issue fraction (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
+| `gpu_prof_pipe_fp32_active` | FP32 pipe issue fraction (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
+| `gpu_prof_pipe_fp16_active` | FP16 pipe issue fraction (0..1). Requires `--metrics-producer-dcgm-profiling`. | 1s |
 
 All metrics include `uuid` (GPU identifier) and `index` (GPU index) attributes. Process-level metrics also include `pid` and `comm` attributes.
 
@@ -87,6 +94,7 @@ docker run -it --rm \
 |------|-------------|---------|
 | `--remote-store-address` | gRPC endpoint for metric storage | Required |
 | `--metrics-producer-nvidia-gpu` | Enable NVIDIA GPU metrics | false |
+| `--metrics-producer-dcgm-profiling` | Enable DCGM profiling metrics (DRAM bandwidth, SM/pipe activity). See [DCGM profiling](#dcgm-profiling-optional) below. | false |
 | `--collection-interval` | Metric export interval | 10s |
 | `--node` | Node name for metric labeling | Machine ID |
 | `--bearer-token` | Authentication token | - |
@@ -111,6 +119,20 @@ The agent consists of three main components:
 - NVIDIA GPU with driver version 390.x or newer
 - Linux operating system
 - NVIDIA Management Library (NVML) available
+
+### DCGM profiling (optional)
+
+Setting `--metrics-producer-dcgm-profiling=true` loads `libdcgm.so` in-process (DCGM *embedded* mode — no separate `nv-hostengine` daemon). While enabled, the agent acquires the GPU's PerfWorks counter subsystem **exclusively**: NVIDIA Nsight Compute (`ncu`) and any CUPTI Profiling API clients on the same GPU will fail to start. The CUPTI callback API used for kernel-launch tracing (Parca GPU profiler / `libparcagpucupti.so`) is unaffected.
+
+Multiply the `gpu_prof_dram_active` fraction by the GPU's peak memory bandwidth (e.g. L4 = 300 GB/s, A100 = 1.55 TB/s, H100 = 3.35 TB/s) to get sustained bandwidth in bytes/sec.
+
+`libdcgm.so` is not bundled in the container image — like `libnvidia-ml.so`, it must be supplied at runtime. The simplest options:
+
+- **NVIDIA Container Toolkit / CDI**: configure the CDI spec to inject `libdcgm.so.*` from the host (the host needs `datacenter-gpu-manager` installed, e.g. `apt install datacenter-gpu-manager` on Debian/Ubuntu).
+- **Bind mount**: `-v /usr/lib/x86_64-linux-gnu/libdcgm.so.3:/usr/lib/x86_64-linux-gnu/libdcgm.so.3` (or the equivalent aarch64 path).
+- **Build from source**: install `libdcgm` on the target host directly.
+
+If `libdcgm.so` cannot be loaded the agent will exit with `Failed to instantiate DCGM profiling producer: ... Is libdcgm.so present and the NVIDIA driver loaded?`.
 
 ## Building from Source
 
