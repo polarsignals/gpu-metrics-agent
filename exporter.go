@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/oklog/run"
-	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
-	"github.com/open-telemetry/otel-arrow/pkg/otel/arrow_record"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
+	"google.golang.org/grpc"
 )
 
 type Producer interface {
@@ -24,13 +24,8 @@ type ProducerConfig struct {
 	ScopeName string
 }
 
-type stream struct {
-	endpoint      arrowpb.ArrowMetricsService_ArrowMetricsClient
-	arrowProducer *arrow_record.Producer
-}
-
 type Exporter struct {
-	client arrowpb.ArrowMetricsServiceClient
+	client pmetricotlp.GRPCClient
 	// NB: someday we might want to have several producer groups,
 	// each of which collects at different intervals.
 	// For now we are only collecting one scope (GPU metrics)
@@ -38,34 +33,18 @@ type Exporter struct {
 	interval      time.Duration
 	producers     []ProducerConfig
 	resourceAttrs map[string]any
-	stream        *stream
 }
 
-func NewExporter(client arrowpb.ArrowMetricsServiceClient, interval time.Duration, resourceAttrs map[string]any) Exporter {
+func NewExporter(conn *grpc.ClientConn, interval time.Duration, resourceAttrs map[string]any) Exporter {
 	return Exporter{
-		client:        client,
+		client:        pmetricotlp.NewGRPCClient(conn),
 		interval:      interval,
 		resourceAttrs: resourceAttrs,
-		stream:        nil,
 	}
 }
 
 func (e *Exporter) AddProducer(p ProducerConfig) {
 	e.producers = append(e.producers, p)
-}
-
-func (e *Exporter) makeStream(ctx context.Context) error {
-	slog.Debug("making new stream")
-	endpoint, err := e.client.ArrowMetrics(ctx)
-	if err != nil {
-		return err
-	}
-	p := arrow_record.NewProducer()
-	e.stream = &stream{
-		endpoint:      endpoint,
-		arrowProducer: p,
-	}
-	return nil
 }
 
 func (e *Exporter) report(ctx context.Context) error {
@@ -75,7 +54,7 @@ func (e *Exporter) report(ctx context.Context) error {
 		return err
 	}
 	for _, p := range e.producers {
-		slog.Debug("Running arrow metrics producer", "scope", p.ScopeName)
+		slog.Debug("Running metrics producer", "scope", p.ScopeName)
 		s := r.ScopeMetrics().AppendEmpty()
 		s.Scope().SetName(p.ScopeName)
 		ms := s.Metrics()
@@ -85,61 +64,25 @@ func (e *Exporter) report(ctx context.Context) error {
 	}
 
 	dpc := m.DataPointCount()
-	slog.Debug("About to report arrow metrics", "data points", dpc)
+	slog.Debug("About to report otlp metrics", "data points", dpc)
 
-	retriesRemaining := 1
-	var err error
-	var arrow *arrowpb.BatchArrowRecords
-	for retriesRemaining >= 0 {
-		retriesRemaining--
-		if e.stream == nil {
-			err = e.makeStream(ctx)
-			if err != nil {
-				// if we failed to create a new stream, don't retry.
-				// The point of the retry loop is to handle the stream
-				// legitimately going away e.g. due to the server
-				// having specified max_connection_age,
-				// not unexpected issues creating a new stream.
-				break
-			}
-		}
-		arrow, err = e.stream.arrowProducer.BatchArrowRecordsFromMetrics(m)
-		if err != nil {
-			slog.Warn("Error on produce", "error", err)
-			e.stream = nil
-			continue
-		}
-		start := time.Now()
-		err = e.stream.endpoint.Send(arrow)
-		if err != nil {
-			slog.Warn("Error on send", "error", err)
-			e.stream = nil
-			continue
-		}
-		batchStatus, err := e.stream.endpoint.Recv()
-		if err != nil {
-			slog.Warn("Error on recv", "error", err)
-			return err
-		}
-		if batchStatus.GetStatusCode() != arrowpb.StatusCode_OK {
-			slog.Warn("unexpected status code",
-				"status", batchStatus.GetStatusCode(),
-				"message", batchStatus.GetStatusMessage(),
-			)
-			return err
-		}
-
-		slog.Info("Send succeeded",
-			"data points", dpc,
-			"duration", time.Since(start),
-		)
-		break
-	}
-
+	req := pmetricotlp.NewExportRequestFromMetrics(m)
+	start := time.Now()
+	resp, err := e.client.Export(ctx, req)
 	if err != nil {
-		return err
+		return fmt.Errorf("otlp export failed: %w", err)
+	}
+	if ps := resp.PartialSuccess(); ps.RejectedDataPoints() > 0 || ps.ErrorMessage() != "" {
+		slog.Warn("otlp partial success",
+			"rejected", ps.RejectedDataPoints(),
+			"message", ps.ErrorMessage(),
+		)
 	}
 
+	slog.Info("Send succeeded",
+		"data points", dpc,
+		"duration", time.Since(start),
+	)
 	return nil
 }
 
@@ -158,7 +101,7 @@ func (e *Exporter) Collect(ctx context.Context) error {
 }
 
 func (e *Exporter) Start(ctx context.Context) error {
-	slog.Info("running arrow metrics exporter", "producers", len(e.producers))
+	slog.Info("running otlp metrics exporter", "producers", len(e.producers))
 	if len(e.producers) == 0 {
 		return errors.New("no producers configured")
 	}
@@ -170,7 +113,7 @@ func (e *Exporter) Start(ctx context.Context) error {
 			return nil
 		case <-tick.C:
 			if err := e.report(ctx); err != nil {
-				return fmt.Errorf("failed to send arrow metrics: %v", err)
+				return fmt.Errorf("failed to send otlp metrics: %v", err)
 			}
 			tick.Reset(addJitter(e.interval, 0.2))
 		}

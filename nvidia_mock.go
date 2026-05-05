@@ -32,6 +32,7 @@ type MockProducer struct {
 }
 
 func (p *MockProducer) Collect(ctx context.Context) error {
+	<-ctx.Done()
 	return nil
 }
 
