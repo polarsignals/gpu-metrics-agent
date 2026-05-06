@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/oklog/run"
-	arrowpb "github.com/open-telemetry/otel-arrow/api/experimental/arrow/v1"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"go.opentelemetry.io/otel/trace/noop"
@@ -107,15 +106,14 @@ func mainWithExitCode() ExitCode {
 	}
 	defer grpcConn.Close()
 
-	arrowClient := arrowpb.NewArrowMetricsServiceClient(grpcConn)
-	arrowMetricsExporter := NewExporter(arrowClient, f.CollectionInterval, map[string]any{"node": f.Node})
+	metricsExporter := NewExporter(grpcConn, f.CollectionInterval, map[string]any{"node": f.Node})
 	const nvidiaMetricsScopeName = "parca.nvidia_gpu_metrics"
 	if f.MetricsProducer.NvidiaGpu {
 		nvidia, err := NewNvidiaProducer()
 		if err != nil {
 			return Failure("Failed to instantiate nvidia metrics producer: %v. Are the Nvidia drivers installed?", err)
 		}
-		arrowMetricsExporter.AddProducer(ProducerConfig{
+		metricsExporter.AddProducer(ProducerConfig{
 			Producer:  nvidia,
 			ScopeName: nvidiaMetricsScopeName,
 		})
@@ -127,7 +125,7 @@ func mainWithExitCode() ExitCode {
 			// don't conflict with the real producer
 			scopeName = scopeName + "_mock"
 		}
-		arrowMetricsExporter.AddProducer(ProducerConfig{
+		metricsExporter.AddProducer(ProducerConfig{
 			Producer:  mock,
 			ScopeName: scopeName,
 		})
@@ -135,12 +133,12 @@ func mainWithExitCode() ExitCode {
 	ctx, cancel := context.WithCancel(ctx)
 	var g run.Group
 	g.Add(func() error {
-		return arrowMetricsExporter.Collect(ctx)
+		return metricsExporter.Collect(ctx)
 	}, func(error) {
 		cancel()
 	})
 	g.Add(func() error {
-		return arrowMetricsExporter.Start(ctx)
+		return metricsExporter.Start(ctx)
 	}, func(error) {
 		cancel()
 	})
