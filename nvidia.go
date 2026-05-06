@@ -389,6 +389,7 @@ func (ds *perDeviceState) collectUtilization() error {
 		return samples[i].TimeStamp < samples[j].TimeStamp
 	})
 
+	offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
 	for _, s := range samples {
 		value := getValue(s.SampleValue).(int64)
 
@@ -404,7 +405,7 @@ func (ds *perDeviceState) collectUtilization() error {
 		dp := g.DataPoints().AppendEmpty()
 		dp.Attributes().PutStr(attributeUUID, ds.uuid)
 		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
-		dp.SetTimestamp(pcommon.Timestamp(s.TimeStamp * 1000)) // micros to nanos
+		dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
 		dp.SetIntValue(value)
 	}
 
@@ -436,6 +437,7 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 		return samples[i].TimeStamp < samples[j].TimeStamp
 	})
 
+	offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
 	for _, s := range samples {
 		value := getValue(s.SampleValue).(int64)
 
@@ -450,7 +452,7 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 		dp := g.DataPoints().AppendEmpty()
 		dp.Attributes().PutStr(attributeUUID, ds.uuid)
 		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
-		dp.SetTimestamp(pcommon.Timestamp(s.TimeStamp * 1000)) // micros to nanos
+		dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
 		dp.SetIntValue(value)
 	}
 
@@ -598,6 +600,7 @@ func (ds *perDeviceState) collectPowerConsumption() error {
 		return samples[i].TimeStamp < samples[j].TimeStamp
 	})
 
+	offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
 	for _, s := range samples {
 		if s.TimeStamp == 0 {
 			continue
@@ -615,7 +618,7 @@ func (ds *perDeviceState) collectPowerConsumption() error {
 		dp := g.DataPoints().AppendEmpty()
 		dp.Attributes().PutStr(attributeUUID, ds.uuid)
 		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
-		dp.SetTimestamp(pcommon.Timestamp(s.TimeStamp * 1000)) // micros to nanos
+		dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
 		dp.SetIntValue(value)
 	}
 
@@ -688,6 +691,25 @@ func (ds *perDeviceState) collectPCIThroughput() error {
 	}
 
 	return nil
+}
+
+// nvmlSampleOffsetNanos returns the offset in nanoseconds to add to an NVML
+// sample timestamp (microseconds against an unspecified reference clock —
+// typically CLOCK_BOOTTIME on Linux drivers) to convert it to wall-clock
+// nanoseconds since the Unix epoch. It assumes the most recent sample's
+// timestamp is approximately "now" in NVML's clock and anchors against
+// wallNow. Returns 0 if there are no usable samples.
+func nvmlSampleOffsetNanos(wallNow time.Time, samples []nvml.Sample) int64 {
+	var maxTs uint64
+	for _, s := range samples {
+		if s.TimeStamp > maxTs {
+			maxTs = s.TimeStamp
+		}
+	}
+	if maxTs == 0 {
+		return 0
+	}
+	return wallNow.UnixNano() - int64(maxTs)*1000
 }
 
 func valueGetter(sampleType nvml.ValueType) (func([8]byte) any, error) {
