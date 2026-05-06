@@ -373,40 +373,59 @@ func (ds *perDeviceState) collectUtilization() error {
 	maxTimestamp := ds.getLastTimestamp(metricName)
 
 	sampleType, samples, ret := ds.d.GetSamples(nvml.GPU_UTILIZATION_SAMPLES, maxTimestamp)
-	if !errors.Is(ret, nvml.SUCCESS) {
-		if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
-			slog.Warn("get GPU_UTILIZATION_SAMPLES returned not found", "err", ret)
-			return nil
+	switch {
+	case errors.Is(ret, nvml.SUCCESS):
+		getValue, err := valueGetter(sampleType)
+		if err != nil {
+			return err
 		}
+
+		sort.Slice(samples, func(i, j int) bool {
+			return samples[i].TimeStamp < samples[j].TimeStamp
+		})
+
+		offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
+		for _, s := range samples {
+			value := getValue(s.SampleValue).(int64)
+
+			if s.TimeStamp == 0 {
+				continue
+			}
+			if value < 0 || value > 100 { // ignore if below 0% or above 100%
+				continue
+			}
+
+			maxTimestamp = max(maxTimestamp, s.TimeStamp)
+
+			dp := g.DataPoints().AppendEmpty()
+			dp.Attributes().PutStr(attributeUUID, ds.uuid)
+			dp.Attributes().PutInt(attributeIndex, int64(ds.index))
+			dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
+			dp.SetIntValue(value)
+		}
+	case errors.Is(ret, nvml.ERROR_NOT_FOUND):
+		// Sample buffer empty (typically when the GPU is idle); fall through
+		// to the snapshot fallback below so the series stays continuous.
+	default:
 		return fmt.Errorf("failed to get GPU_UTILIZATION_SAMPLES: %w", ret)
 	}
-	getValue, err := valueGetter(sampleType)
-	if err != nil {
-		return err
-	}
 
-	sort.Slice(samples, func(i, j int) bool {
-		return samples[i].TimeStamp < samples[j].TimeStamp
-	})
-
-	offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
-	for _, s := range samples {
-		value := getValue(s.SampleValue).(int64)
-
-		if s.TimeStamp == 0 {
-			continue
+	if g.DataPoints().Len() == 0 {
+		// NVML returned no usable samples — emit a current-state snapshot so
+		// the series keeps reporting (e.g. 0% during idle) instead of going dark.
+		// maxTimestamp is intentionally not advanced here: it's in NVML's clock
+		// domain, not wall clock, so the next GetSamples call must keep it as-is.
+		rates, ret := ds.d.GetUtilizationRates()
+		if errors.Is(ret, nvml.SUCCESS) {
+			ts := time.Now()
+			dp := g.DataPoints().AppendEmpty()
+			dp.Attributes().PutStr(attributeUUID, ds.uuid)
+			dp.Attributes().PutInt(attributeIndex, int64(ds.index))
+			dp.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+			dp.SetIntValue(int64(rates.Gpu))
+		} else if !errors.Is(ret, nvml.ERROR_NOT_SUPPORTED) {
+			slog.Warn("GetUtilizationRates failed", "device", ds.index, "err", nvml.ErrorString(ret))
 		}
-		if value < 0 || value > 100 { // ignore if below 0% or above 100%
-			continue
-		}
-
-		maxTimestamp = max(maxTimestamp, s.TimeStamp)
-
-		dp := g.DataPoints().AppendEmpty()
-		dp.Attributes().PutStr(attributeUUID, ds.uuid)
-		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
-		dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
-		dp.SetIntValue(value)
 	}
 
 	ds.appendGauge(metricName, maxTimestamp, g)
@@ -421,39 +440,54 @@ func (ds *perDeviceState) collectMemoryUtilization() error {
 	maxTimestamp := ds.getLastTimestamp(metricName)
 
 	sampleType, samples, ret := ds.d.GetSamples(nvml.MEMORY_UTILIZATION_SAMPLES, maxTimestamp)
-	if !errors.Is(ret, nvml.SUCCESS) {
-		if errors.Is(ret, nvml.ERROR_NOT_FOUND) {
-			slog.Warn("get MEMORY_UTILIZATION_SAMPLES not found", "err", ret)
-			return nil
+	switch {
+	case errors.Is(ret, nvml.SUCCESS):
+		getValue, err := valueGetter(sampleType)
+		if err != nil {
+			return err
 		}
+
+		sort.Slice(samples, func(i, j int) bool {
+			return samples[i].TimeStamp < samples[j].TimeStamp
+		})
+
+		offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
+		for _, s := range samples {
+			value := getValue(s.SampleValue).(int64)
+
+			if s.TimeStamp == 0 {
+				continue
+			}
+			if value < 0 || value > 100 { // ignore if below 0% or above 100%
+				continue
+			}
+
+			maxTimestamp = max(maxTimestamp, s.TimeStamp)
+			dp := g.DataPoints().AppendEmpty()
+			dp.Attributes().PutStr(attributeUUID, ds.uuid)
+			dp.Attributes().PutInt(attributeIndex, int64(ds.index))
+			dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
+			dp.SetIntValue(value)
+		}
+	case errors.Is(ret, nvml.ERROR_NOT_FOUND):
+		// Sample buffer empty; fall through to the snapshot fallback below.
+	default:
 		return fmt.Errorf("get MEMORY_UTILIZATION_SAMPLES failed %w", ret)
 	}
-	getValue, err := valueGetter(sampleType)
-	if err != nil {
-		return err
-	}
 
-	sort.Slice(samples, func(i, j int) bool {
-		return samples[i].TimeStamp < samples[j].TimeStamp
-	})
-
-	offsetNanos := nvmlSampleOffsetNanos(time.Now(), samples)
-	for _, s := range samples {
-		value := getValue(s.SampleValue).(int64)
-
-		if s.TimeStamp == 0 {
-			continue
+	if g.DataPoints().Len() == 0 {
+		// See note in collectUtilization. maxTimestamp is left unchanged.
+		rates, ret := ds.d.GetUtilizationRates()
+		if errors.Is(ret, nvml.SUCCESS) {
+			ts := time.Now()
+			dp := g.DataPoints().AppendEmpty()
+			dp.Attributes().PutStr(attributeUUID, ds.uuid)
+			dp.Attributes().PutInt(attributeIndex, int64(ds.index))
+			dp.SetTimestamp(pcommon.Timestamp(ts.UnixNano()))
+			dp.SetIntValue(int64(rates.Memory))
+		} else if !errors.Is(ret, nvml.ERROR_NOT_SUPPORTED) {
+			slog.Warn("GetUtilizationRates failed", "device", ds.index, "err", nvml.ErrorString(ret))
 		}
-		if value < 0 || value > 100 { // ignore if below 0% or above 100%
-			continue
-		}
-
-		maxTimestamp = max(maxTimestamp, s.TimeStamp)
-		dp := g.DataPoints().AppendEmpty()
-		dp.Attributes().PutStr(attributeUUID, ds.uuid)
-		dp.Attributes().PutInt(attributeIndex, int64(ds.index))
-		dp.SetTimestamp(pcommon.Timestamp(int64(s.TimeStamp)*1000 + offsetNanos))
-		dp.SetIntValue(value)
 	}
 
 	ds.appendGauge(metricName, maxTimestamp, g)
