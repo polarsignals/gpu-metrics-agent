@@ -130,6 +130,17 @@ func mainWithExitCode() ExitCode {
 			ScopeName: scopeName,
 		})
 	}
+	if f.MetricsProducer.DcgmProfiling {
+		dcgmProd, err := NewDcgmProducer()
+		if err != nil {
+			return Failure("Failed to instantiate DCGM profiling producer: %v. Is libdcgm.so present and the NVIDIA driver loaded?", err)
+		}
+		defer dcgmProd.Close()
+		metricsExporter.AddProducer(ProducerConfig{
+			Producer:  dcgmProd,
+			ScopeName: "parca.nvidia_gpu_dcgm_metrics",
+		})
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	var g run.Group
 	g.Add(func() error {

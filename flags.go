@@ -101,6 +101,7 @@ func (f FlagsLogs) ConfigureLogger() {
 type FlagsMetricProducer struct {
 	NvidiaGpu     bool `default:"false" help:"Collect metrics related to Nvidia GPUs."`
 	NvidiaGpuMock bool `default:"false" help:"Generate fake Nvidia GPU metrics." hidden:""`
+	DcgmProfiling bool `default:"false" help:"Collect DCGM profiling metrics (DRAM/SM/pipe active fractions). Acquires GPU PerfWorks counters exclusively — disables ncu and CUPTI profiling API on the same GPU while running."`
 }
 
 func Parse() (Flags, error) {
